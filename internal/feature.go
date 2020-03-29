@@ -91,3 +91,9 @@ func (v Version) Less(other Version) bool {
 	}
 	return false
 }
+
+// KernelVersion returns the Version's calculated kernel version,
+// as defined in the the KERNEL_VERSION macro in linux/version.h.
+func (v Version) KernelVersion() uint32 {
+	return uint32(v[0])<<16 + uint32(v[1])<<8 + uint32(v[2])
+}
