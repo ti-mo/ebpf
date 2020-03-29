@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/cilium/ebpf/asm"
@@ -17,6 +19,86 @@ import (
 	"github.com/cilium/ebpf/internal/btf"
 	"github.com/cilium/ebpf/internal/unix"
 )
+
+const (
+	// Magic version value to indicate to the ELF loader that bpf() needs to be
+	// called with the `version` parameter set to the same value as the
+	// kernel's KERNEL_VERSION macro at compile time.
+	magicVersion = 0xFFFFFFFE
+)
+
+var (
+	// Match three decimals separated by dots.
+	rgxKernelVersion = regexp.MustCompile(`\d{1,3}\.\d{1,3}\.\d{1,3}`)
+)
+
+// detectKernelVersion attempts to detect the exact version of the running host kernel.
+// It scans in the following order: /proc/version_signature, uname -v, uname -r.
+func detectKernelVersion() (internal.Version, error) {
+
+	// For Ubuntu, try reading /proc/version_signature.
+	// Example format: Ubuntu 4.15.0-91.92-generic 4.15.18
+	if pvs, err := ioutil.ReadFile("/proc/version_signature"); err == nil {
+		// If /proc/version_signature exists, failing to parse it is an error.
+		v, err := findKernelVersion(string(pvs))
+		if err != nil {
+			return internal.Version{}, err
+		}
+		return parseKernelVersion(v)
+	}
+
+	var uname unix.Utsname
+	if err := unix.Uname(&uname); err != nil {
+		panic(err)
+	}
+
+	// Debian puts the version including the patch level in uname.Version.
+	// It is not an error if there's no version number in uname.Version.
+	// Example format: #1 SMP Debian 4.19.37-5+deb10u2 (2019-08-08)
+	if v, err := findKernelVersion(byteStr(uname.Version[:])); err == nil {
+		return parseKernelVersion(v)
+	}
+
+	// Most distributions have the full kernel version including patch level
+	// in uname.Release.
+	// Example format: 4.19.0-5-amd64, 5.5.10-arch1-1
+	v, err := findKernelVersion(byteStr(uname.Release[:]))
+	if err != nil {
+		return internal.Version{}, err
+	}
+	return parseKernelVersion(v)
+}
+
+// findKernelVersion searches a string for three digits separated by dots.
+// If s contains multiple matches, the last entry is returned.
+func findKernelVersion(s string) (string, error) {
+	m := rgxKernelVersion.FindAllString(s, -1)
+	if m == nil {
+		return "", fmt.Errorf("parsing kernel version from string: %s", s)
+	}
+
+	// Pick the last match of the string in case there are multiple.
+	return m[len(m)-1], nil
+}
+
+// parseKernelVersion parses a string containing three digits separated
+// by dots into a Version.
+func parseKernelVersion(s string) (internal.Version, error) {
+	v, err := internal.NewVersion(s)
+	if err != nil {
+		return internal.Version{}, fmt.Errorf("parsing into 'Major.Minor.Patch': %s", s)
+	}
+	return v, nil
+}
+
+// byteStr converts a slice of bytes containing a
+// NULL-terminated string to a string.
+func byteStr(s []byte) string {
+	if i := bytes.IndexByte(s, 0); i >= 0 {
+		s = s[:i]
+	}
+	return string(s)
+}
 
 // elfCode is a convenience to reduce the amount of arguments that have to
 // be passed around explicitly. You should treat it's contents as immutable.
@@ -212,6 +294,17 @@ func loadVersion(sec *elf.Section, bo binary.ByteOrder) (uint32, error) {
 	if err := binary.Read(sec.Open(), bo, &version); err != nil {
 		return 0, fmt.Errorf("section %s: %v", sec.Name, err)
 	}
+
+	// Overwrite the program's version section if it's set
+	// to the magic constant.
+	if version == magicVersion {
+		v, err := detectKernelVersion()
+		if err != nil {
+			return 0, fmt.Errorf("detect kernel version: %w", err)
+		}
+		version = v.KernelVersion()
+	}
+
 	return version, nil
 }
 
