@@ -40,6 +40,7 @@ type MapSpec struct {
 	ValueSize  uint32
 	MaxEntries uint32
 	Flags      uint32
+	Extra      []byte
 
 	// Automatically pin and load a map from MapOptions.PinPath.
 	// Generates an error if an existing pinned map is incompatible with the MapSpec.

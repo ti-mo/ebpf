@@ -431,9 +431,12 @@ func (ec *elfCode) loadMaps(maps map[string]*MapSpec, mapSections map[elf.Sectio
 				return fmt.Errorf("map %v: missing flags", mapSym)
 			}
 
-			if _, err := io.Copy(internal.DiscardZeroes{}, lr); err != nil {
-				return fmt.Errorf("map %v: unknown and non-zero fields in definition", mapSym)
+			// Drain trailing content in map definition for out-of-band parsing by the caller.
+			b := new(bytes.Buffer)
+			if _, err := io.Copy(b, lr); err != nil {
+				return fmt.Errorf("map %v: error reading extra map data into spec: %w", mapSym, err)
 			}
+			spec.Extra = b.Bytes()
 
 			maps[mapSym.Name] = &spec
 		}
