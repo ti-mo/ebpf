@@ -28,13 +28,9 @@ The BPF Type Format describes more than just the types used by a BPF program. It
 includes debug aids like which source line corresponds to which instructions and
 what global variables are used.
 
-[BTF parsing](internal/btf/) lives in a separate internal package since exposing
-it would mean an additional maintenance burden, and because the API still
-has sharp corners. The most important concept is the `btf.Type` interface, which
+[BTF parsing](btf/) lives in a separate package.
+Its most important concept is the `btf.Type` interface, which
 also describes things that aren't really types like `.rodata` or `.bss` sections.
-`btf.Type`s can form cyclical graphs, which can easily lead to infinite loops if
-one is not careful. Hopefully a safe pattern to work with `btf.Type` emerges as
-we write more code that deals with it.
 
 Specifications
 ---

@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cilium/ebpf/btf"
 	"github.com/cilium/ebpf/internal"
-	"github.com/cilium/ebpf/internal/btf"
 )
 
 // MapInfo describes a map.

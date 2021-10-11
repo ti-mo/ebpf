@@ -26,7 +26,7 @@ TARGETS := \
 	testdata/strings \
 	testdata/freplace \
 	testdata/iproute2_map_compat \
-	internal/btf/testdata/relocs
+	btf/testdata/relocs
 
 .PHONY: all clean docker-all docker-shell
 
@@ -48,7 +48,7 @@ docker-shell:
 
 clean:
 	-$(RM) testdata/*.elf
-	-$(RM) internal/btf/testdata/*.elf
+	-$(RM) btf/testdata/*.elf
 
 all: $(addsuffix -el.elf,$(TARGETS)) $(addsuffix -eb.elf,$(TARGETS))
 	ln -srf testdata/loader-$(CLANG)-el.elf testdata/loader-el.elf
@@ -68,6 +68,6 @@ testdata/loader-%-eb.elf: testdata/loader.c
 
 # Usage: make VMLINUX=/path/to/vmlinux vmlinux-btf
 .PHONY: vmlinux-btf
-vmlinux-btf: internal/btf/testdata/vmlinux-btf.gz
-internal/btf/testdata/vmlinux-btf.gz: $(VMLINUX)
+vmlinux-btf: btf/testdata/vmlinux-btf.gz
+btf/testdata/vmlinux-btf.gz: $(VMLINUX)
 	objcopy --dump-section .BTF=/dev/stdout "$<" /dev/null | gzip > "$@"

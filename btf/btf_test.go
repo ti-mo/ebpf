@@ -123,7 +123,7 @@ func TestParseCurrentKernelBTF(t *testing.T) {
 }
 
 func TestLoadSpecFromElf(t *testing.T) {
-	testutils.Files(t, testutils.Glob(t, "../../testdata/loader-e*.elf"), func(t *testing.T, file string) {
+	testutils.Files(t, testutils.Glob(t, "../testdata/loader-e*.elf"), func(t *testing.T, file string) {
 		fh, err := os.Open(file)
 		if err != nil {
 			t.Fatal(err)
@@ -206,7 +206,7 @@ func TestLoadKernelSpec(t *testing.T) {
 }
 
 func TestSpecCopy(t *testing.T) {
-	fh, err := os.Open("../../testdata/loader-el.elf")
+	fh, err := os.Open("../testdata/loader-el.elf")
 	if err != nil {
 		t.Fatal(err)
 	}
