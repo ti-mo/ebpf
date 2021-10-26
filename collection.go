@@ -499,7 +499,7 @@ func (cl *collectionLoader) populateMaps() error {
 
 // LoadCollection parses an object file and converts it to a collection.
 func LoadCollection(file string) (*Collection, error) {
-	spec, err := LoadCollectionSpec(file)
+	spec, err := LoadCollectionSpec(file, nil)
 	if err != nil {
 		return nil, err
 	}

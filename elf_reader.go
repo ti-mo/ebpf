@@ -28,15 +28,24 @@ type elfCode struct {
 	btf      *btf.Spec
 }
 
+// CollectionSpecOptions control reading a CollectionSpec from an ELF.
+type CollectionSpecOptions struct {
+	// SectionPrefixes allows specifying a custom list of ELF section prefixes
+	// to scan for ProgramSpecs during ELF reading. The resulting objects have
+	// their ProgramType and AttachType set to 0 and carry the original section
+	// name in AttachTo.
+	SectionPrefixes []string
+}
+
 // LoadCollectionSpec parses an ELF file into a CollectionSpec.
-func LoadCollectionSpec(file string) (*CollectionSpec, error) {
+func LoadCollectionSpec(file string, opts *CollectionSpecOptions) (*CollectionSpec, error) {
 	f, err := os.Open(file)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
 
-	spec, err := LoadCollectionSpecFromReader(f)
+	spec, err := LoadCollectionSpecFromReader(f, opts)
 	if err != nil {
 		return nil, fmt.Errorf("file %s: %w", file, err)
 	}
@@ -44,7 +53,11 @@ func LoadCollectionSpec(file string) (*CollectionSpec, error) {
 }
 
 // LoadCollectionSpecFromReader parses an ELF file into a CollectionSpec.
-func LoadCollectionSpecFromReader(rd io.ReaderAt) (*CollectionSpec, error) {
+func LoadCollectionSpecFromReader(rd io.ReaderAt, opts *CollectionSpecOptions) (*CollectionSpec, error) {
+	if opts == nil {
+		opts = &CollectionSpecOptions{}
+	}
+
 	f, err := internal.NewSafeELFFile(rd)
 	if err != nil {
 		return nil, err
@@ -183,7 +196,7 @@ func LoadCollectionSpecFromReader(rd io.ReaderAt) (*CollectionSpec, error) {
 	}
 
 	// Finally, collect programs and link them.
-	progs, err := ec.loadPrograms()
+	progs, err := ec.loadPrograms(opts.SectionPrefixes)
 	if err != nil {
 		return nil, fmt.Errorf("load programs: %w", err)
 	}
@@ -247,7 +260,7 @@ func newElfSection(section *elf.Section, kind elfSectionKind) *elfSection {
 	}
 }
 
-func (ec *elfCode) loadPrograms() (map[string]*ProgramSpec, error) {
+func (ec *elfCode) loadPrograms(prefixes []string) (map[string]*ProgramSpec, error) {
 	var (
 		progs []*ProgramSpec
 		libs  []*ProgramSpec
@@ -272,7 +285,7 @@ func (ec *elfCode) loadPrograms() (map[string]*ProgramSpec, error) {
 			return nil, fmt.Errorf("program %s: %w", funcSym.Name, err)
 		}
 
-		progType, attachType, progFlags, attachTo := getProgType(sec.Name)
+		progType, attachType, progFlags, attachTo, isLib := getProgType(sec.Name, prefixes)
 
 		spec := &ProgramSpec{
 			Name:          funcSym.Name,
@@ -293,7 +306,7 @@ func (ec *elfCode) loadPrograms() (map[string]*ProgramSpec, error) {
 			}
 		}
 
-		if spec.Type == UnspecifiedProgram {
+		if isLib {
 			// There is no single name we can use for "library" sections,
 			// since they may contain multiple functions. We'll decode the
 			// labels they contain later on, and then link sections that way.
@@ -963,7 +976,7 @@ func (ec *elfCode) loadDataSections(maps map[string]*MapSpec) error {
 	return nil
 }
 
-func getProgType(sectionName string) (ProgramType, AttachType, uint32, string) {
+func getProgType(sectionName string, prefixes []string) (ProgramType, AttachType, uint32, string, bool) {
 	types := map[string]struct {
 		progType   ProgramType
 		attachType AttachType
@@ -1039,13 +1052,23 @@ func getProgType(sectionName string) (ProgramType, AttachType, uint32, string) {
 		}
 
 		if !strings.HasSuffix(prefix, "/") {
-			return t.progType, t.attachType, t.progFlags, ""
+			return t.progType, t.attachType, t.progFlags, "", false
 		}
 
-		return t.progType, t.attachType, t.progFlags, sectionName[len(prefix):]
+		return t.progType, t.attachType, t.progFlags, sectionName[len(prefix):], false
 	}
 
-	return UnspecifiedProgram, AttachNone, 0, ""
+	// Match caller-provided prefixes. Use the original section name as the
+	// AttachTo field in the resulting ProgramSpec and let the caller figure
+	// out which ProgType and AttachType to assign.
+	for _, prefix := range prefixes {
+		if !strings.HasPrefix(sectionName, prefix) {
+			continue
+		}
+		return UnspecifiedProgram, AttachNone, 0, sectionName, false
+	}
+
+	return UnspecifiedProgram, AttachNone, 0, "", true
 }
 
 func (ec *elfCode) loadRelocations(sec *elf.Section, symbols []elf.Symbol) (map[uint64]elf.Symbol, error) {
