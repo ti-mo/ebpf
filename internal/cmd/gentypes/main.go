@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cilium/ebpf/btf/types"
 	"github.com/cilium/ebpf/internal"
 	"github.com/cilium/ebpf/internal/btf"
 	"github.com/cilium/ebpf/internal/sys"
@@ -60,9 +61,9 @@ func run(args []string) error {
 }
 
 func generateTypes(spec *btf.Spec) ([]byte, error) {
-	objName := &btf.Array{Nelems: 16, Type: &btf.Int{Encoding: btf.Char, Size: 1}}
-	linkID := &btf.Int{Size: 4}
-	pointer := &btf.Int{Size: 8}
+	objName := &types.Array{Nelems: 16, Type: &types.Int{Encoding: types.Char, Size: 1}}
+	linkID := &types.Int{Size: 4}
+	pointer := &types.Int{Size: 8}
 
 	// Pre-declare handwritten types sys.ObjName and sys.Pointer so that
 	// generated types can refer to them.
@@ -73,7 +74,7 @@ func generateTypes(spec *btf.Spec) ([]byte, error) {
 	)
 
 	gf := &btf.GoFormatter{
-		Names: map[btf.Type]string{
+		Names: map[types.Type]string{
 			objName: "ObjName",
 			linkID:  "LinkID",
 			pointer: "Pointer",
@@ -118,11 +119,11 @@ import (
 		return enums[i].goType < enums[j].goType
 	})
 
-	enumTypes := make(map[string]btf.Type)
+	enumTypes := make(map[string]types.Type)
 	for _, o := range enums {
 		fmt.Println("enum", o.goType)
 
-		var t *btf.Enum
+		var t *types.Enum
 		if err := spec.TypeByName(o.cType, &t); err != nil {
 			return nil, err
 		}
@@ -187,7 +188,7 @@ import (
 	for _, s := range structs {
 		fmt.Println("struct", s.goType)
 
-		var t *btf.Struct
+		var t *types.Struct
 		if err := spec.TypeByName(s.cType, &t); err != nil {
 			return nil, err
 		}
@@ -368,11 +369,11 @@ import (
 		return attrs[i].goType < attrs[j].goType
 	})
 
-	var bpfAttr *btf.Union
+	var bpfAttr *types.Union
 	if err := spec.TypeByName("bpf_attr", &bpfAttr); err != nil {
 		return nil, err
 	}
-	attrTypes, err := splitUnion(bpfAttr, types{
+	attrTypes, err := splitUnion(bpfAttr, typs{
 		{"map_create", "map_type"},
 		{"map_elem", "map_fd"},
 		{"map_elem_batch", "batch"},
@@ -437,18 +438,18 @@ import (
 		return linkInfoExtraTypes[i].goType < linkInfoExtraTypes[j].goType
 	})
 
-	var bpfLinkInfo *btf.Struct
+	var bpfLinkInfo *types.Struct
 	if err := spec.TypeByName("bpf_link_info", &bpfLinkInfo); err != nil {
 		return nil, err
 	}
 
 	member := bpfLinkInfo.Members[len(bpfLinkInfo.Members)-1]
-	bpfLinkInfoUnion, ok := member.Type.(*btf.Union)
+	bpfLinkInfoUnion, ok := member.Type.(*types.Union)
 	if !ok {
 		return nil, fmt.Errorf("there is not type-specific union")
 	}
 
-	linkInfoTypes, err := splitUnion(bpfLinkInfoUnion, types{
+	linkInfoTypes, err := splitUnion(bpfLinkInfoUnion, typs{
 		{"raw_tracepoint", "raw_tracepoint"},
 		{"tracing", "tracing"},
 		{"cgroup", "cgroup"},
@@ -470,8 +471,8 @@ import (
 	return w.Bytes(), nil
 }
 
-func outputPatchedStruct(gf *btf.GoFormatter, w *bytes.Buffer, id string, s *btf.Struct, patches []patch) error {
-	s = btf.Copy(s).(*btf.Struct)
+func outputPatchedStruct(gf *btf.GoFormatter, w *bytes.Buffer, id string, s *types.Struct, patches []patch) error {
+	s = types.Copy(s).(*types.Struct)
 
 	for i, p := range patches {
 		if err := p(s); err != nil {
@@ -489,17 +490,17 @@ func outputPatchedStruct(gf *btf.GoFormatter, w *bytes.Buffer, id string, s *btf
 	return nil
 }
 
-type types []struct {
+type typs []struct {
 	name                string
 	cFieldOrFirstMember string
 }
 
-func splitUnion(union *btf.Union, types types) (map[string]*btf.Struct, error) {
-	structs := make(map[string]*btf.Struct)
+func splitUnion(union *types.Union, typs typs) (map[string]*types.Struct, error) {
+	structs := make(map[string]*types.Struct)
 
-	for i, t := range types {
+	for i, t := range typs {
 		member := union.Members[i]
-		s, ok := member.Type.(*btf.Struct)
+		s, ok := member.Type.(*types.Struct)
 		if !ok {
 			return nil, fmt.Errorf("%q: %s is not a struct", t.name, member.Type)
 		}
@@ -519,10 +520,10 @@ func splitUnion(union *btf.Union, types types) (map[string]*btf.Struct, error) {
 	return structs, nil
 }
 
-type patch func(*btf.Struct) error
+type patch func(*types.Struct) error
 
-func modify(fn func(*btf.Member) error, members ...string) patch {
-	return func(s *btf.Struct) error {
+func modify(fn func(*types.Member) error, members ...string) patch {
+	return func(s *types.Struct) error {
 		want := make(map[string]bool)
 		for _, name := range members {
 			want[name] = true
@@ -551,8 +552,8 @@ func modify(fn func(*btf.Member) error, members ...string) patch {
 	}
 }
 
-func modifyNth(fn func(*btf.Member) error, indices ...int) patch {
-	return func(s *btf.Struct) error {
+func modifyNth(fn func(*types.Member) error, indices ...int) patch {
+	return func(s *types.Struct) error {
 		for _, i := range indices {
 			if i >= len(s.Members) {
 				return fmt.Errorf("index %d is out of bounds", i)
@@ -566,16 +567,16 @@ func modifyNth(fn func(*btf.Member) error, indices ...int) patch {
 	}
 }
 
-func replace(t btf.Type, members ...string) patch {
-	return modify(func(m *btf.Member) error {
+func replace(t types.Type, members ...string) patch {
+	return modify(func(m *types.Member) error {
 		m.Type = t
 		return nil
 	}, members...)
 }
 
 func choose(member int, name string) patch {
-	return modifyNth(func(m *btf.Member) error {
-		union, ok := m.Type.(*btf.Union)
+	return modifyNth(func(m *types.Member) error {
+		union, ok := m.Type.(*types.Union)
 		if !ok {
 			return fmt.Errorf("member %d is %s, not a union", member, m.Type)
 		}
@@ -593,8 +594,8 @@ func choose(member int, name string) patch {
 }
 
 func chooseNth(member int, n int) patch {
-	return modifyNth(func(m *btf.Member) error {
-		union, ok := m.Type.(*btf.Union)
+	return modifyNth(func(m *types.Member) error {
+		union, ok := m.Type.(*types.Union)
 		if !ok {
 			return fmt.Errorf("member %d is %s, not a union", member, m.Type)
 		}
@@ -610,11 +611,11 @@ func chooseNth(member int, n int) patch {
 	}, member)
 }
 
-func flattenAnon(s *btf.Struct) error {
+func flattenAnon(s *types.Struct) error {
 	for i := range s.Members {
 		m := &s.Members[i]
 
-		cs, ok := m.Type.(*btf.Struct)
+		cs, ok := m.Type.(*types.Struct)
 		if !ok || cs.TypeName() != "" {
 			continue
 		}
@@ -623,7 +624,7 @@ func flattenAnon(s *btf.Struct) error {
 			cs.Members[j].OffsetBits += m.OffsetBits
 		}
 
-		newMembers := make([]btf.Member, 0, len(s.Members)+len(cs.Members)-1)
+		newMembers := make([]types.Member, 0, len(s.Members)+len(cs.Members)-1)
 		newMembers = append(newMembers, s.Members[:i]...)
 		newMembers = append(newMembers, cs.Members...)
 		newMembers = append(newMembers, s.Members[i+1:]...)
@@ -635,13 +636,13 @@ func flattenAnon(s *btf.Struct) error {
 }
 
 func truncateAfter(name string) patch {
-	return func(s *btf.Struct) error {
+	return func(s *types.Struct) error {
 		for i, m := range s.Members {
 			if m.Name != name {
 				continue
 			}
 
-			size, err := btf.Sizeof(m.Type)
+			size, err := types.Sizeof(m.Type)
 			if err != nil {
 				return err
 			}
@@ -656,7 +657,7 @@ func truncateAfter(name string) patch {
 }
 
 func rename(from, to string) patch {
-	return func(s *btf.Struct) error {
+	return func(s *types.Struct) error {
 		for i, m := range s.Members {
 			if m.Name == from {
 				s.Members[i].Name = to
@@ -668,7 +669,7 @@ func rename(from, to string) patch {
 }
 
 func name(member int, name string) patch {
-	return modifyNth(func(m *btf.Member) error {
+	return modifyNth(func(m *types.Member) error {
 		if m.Name != "" {
 			return fmt.Errorf("member already has name %q", m.Name)
 		}
@@ -679,16 +680,16 @@ func name(member int, name string) patch {
 }
 
 func replaceUnionWithBytes(name string) patch {
-	return func(s *btf.Struct) error {
+	return func(s *types.Struct) error {
 		for i, m := range s.Members {
 			if m.Name != name {
 				continue
 			}
-			if u, ok := m.Type.(*btf.Union); ok {
-				s.Members[i] = btf.Member{
+			if u, ok := m.Type.(*types.Union); ok {
+				s.Members[i] = types.Member{
 					Name: name,
-					Type: &btf.Array{
-						Type:   &btf.Int{Size: 1},
+					Type: &types.Array{
+						Type:   &types.Int{Size: 1},
 						Nelems: u.Size,
 					},
 					OffsetBits:   s.Members[i].OffsetBits,

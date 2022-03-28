@@ -6,8 +6,8 @@ import (
 	"fmt"
 
 	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/btf/types"
 	"github.com/cilium/ebpf/internal"
-	"github.com/cilium/ebpf/internal/btf"
 	"github.com/cilium/ebpf/internal/sys"
 )
 
@@ -94,7 +94,7 @@ type RawLinkOptions struct {
 	// Attach must match the attach type of Program.
 	Attach ebpf.AttachType
 	// BTF is the BTF of the attachment target.
-	BTF btf.TypeID
+	BTF types.TypeID
 	// Flags control the attach behaviour.
 	Flags uint32
 }

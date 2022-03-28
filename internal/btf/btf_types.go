@@ -4,9 +4,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-)
 
-//go:generate stringer -linecomment -output=btf_types_string.go -type=FuncLinkage,VarLinkage
+	"github.com/cilium/ebpf/btf/types"
+)
 
 // btfKind describes a Type.
 type btfKind uint8
@@ -33,25 +33,6 @@ const (
 	kindDatasec
 	// Added ~5.13
 	kindFloat
-)
-
-// FuncLinkage describes BTF function linkage metadata.
-type FuncLinkage int
-
-// Equivalent of enum btf_func_linkage.
-const (
-	StaticFunc FuncLinkage = iota // static
-	GlobalFunc                    // global
-	ExternFunc                    // extern
-)
-
-// VarLinkage describes BTF variable linkage metadata.
-type VarLinkage int
-
-const (
-	StaticVar VarLinkage = iota // static
-	GlobalVar                   // global
-	ExternVar                   // extern
 )
 
 const (
@@ -159,17 +140,17 @@ func (bt *btfType) KindFlag() bool {
 	return bt.info(btfTypeKindFlagMask, btfTypeKindFlagShift) == 1
 }
 
-func (bt *btfType) Linkage() FuncLinkage {
-	return FuncLinkage(bt.info(btfTypeVlenMask, btfTypeVlenShift))
+func (bt *btfType) Linkage() types.FuncLinkage {
+	return types.FuncLinkage(bt.info(btfTypeVlenMask, btfTypeVlenShift))
 }
 
-func (bt *btfType) SetLinkage(linkage FuncLinkage) {
+func (bt *btfType) SetLinkage(linkage types.FuncLinkage) {
 	bt.setInfo(uint32(linkage), btfTypeVlenMask, btfTypeVlenShift)
 }
 
-func (bt *btfType) Type() TypeID {
+func (bt *btfType) Type() types.TypeID {
 	// TODO: Panic here if wrong kind?
-	return TypeID(bt.SizeType)
+	return types.TypeID(bt.SizeType)
 }
 
 func (bt *btfType) Size() uint32 {
@@ -195,19 +176,19 @@ func (rt *rawType) Marshal(w io.Writer, bo binary.ByteOrder) error {
 }
 
 type btfArray struct {
-	Type      TypeID
-	IndexType TypeID
+	Type      types.TypeID
+	IndexType types.TypeID
 	Nelems    uint32
 }
 
 type btfMember struct {
 	NameOff uint32
-	Type    TypeID
+	Type    types.TypeID
 	Offset  uint32
 }
 
 type btfVarSecinfo struct {
-	Type   TypeID
+	Type   types.TypeID
 	Offset uint32
 	Size   uint32
 }
@@ -223,18 +204,18 @@ type btfEnum struct {
 
 type btfParam struct {
 	NameOff uint32
-	Type    TypeID
+	Type    types.TypeID
 }
 
 func readTypes(r io.Reader, bo binary.ByteOrder) ([]rawType, error) {
 	var (
-		header btfType
-		types  []rawType
+		header   btfType
+		rawTypes []rawType
 	)
 
-	for id := TypeID(1); ; id++ {
+	for id := types.TypeID(1); ; id++ {
 		if err := binary.Read(r, bo, &header); err == io.EOF {
-			return types, nil
+			return rawTypes, nil
 		} else if err != nil {
 			return nil, fmt.Errorf("can't read type info for id %v: %v", id, err)
 		}
@@ -270,7 +251,7 @@ func readTypes(r io.Reader, bo binary.ByteOrder) ([]rawType, error) {
 		}
 
 		if data == nil {
-			types = append(types, rawType{header, nil})
+			rawTypes = append(rawTypes, rawType{header, nil})
 			continue
 		}
 
@@ -278,10 +259,10 @@ func readTypes(r io.Reader, bo binary.ByteOrder) ([]rawType, error) {
 			return nil, fmt.Errorf("type id %d: kind %v: can't read %T: %v", id, header.Kind(), data, err)
 		}
 
-		types = append(types, rawType{header, data})
+		rawTypes = append(rawTypes, rawType{header, data})
 	}
 }
 
-func intEncoding(raw uint32) (IntEncoding, uint32, byte) {
-	return IntEncoding((raw & 0x0f000000) >> 24), (raw & 0x00ff0000) >> 16, byte(raw & 0x000000ff)
+func intEncoding(raw uint32) (types.IntEncoding, uint32, byte) {
+	return types.IntEncoding((raw & 0x0f000000) >> 24), (raw & 0x00ff0000) >> 16, byte(raw & 0x000000ff)
 }

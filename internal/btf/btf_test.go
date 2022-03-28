@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/cilium/ebpf/btf/types"
 	"github.com/cilium/ebpf/internal"
 	"github.com/cilium/ebpf/internal/testutils"
 )
@@ -77,7 +78,7 @@ func TestTypeByNameAmbiguous(t *testing.T) {
 	testutils.Files(t, testutils.Glob(t, "testdata/relocs-*.elf"), func(t *testing.T, file string) {
 		spec := parseELFBTF(t, file)
 
-		var typ *Struct
+		var typ *types.Struct
 		if err := spec.TypeByName("ambiguous", &typ); err != nil {
 			t.Fatal(err)
 		}
@@ -104,12 +105,12 @@ func TestTypeByName(t *testing.T) {
 
 	for _, typ := range []interface{}{
 		nil,
-		Struct{},
-		&Struct{},
-		[]Struct{},
-		&[]Struct{},
-		map[int]Struct{},
-		&map[int]Struct{},
+		types.Struct{},
+		&types.Struct{},
+		[]types.Struct{},
+		&[]types.Struct{},
+		map[int]types.Struct{},
+		&map[int]types.Struct{},
 		int(0),
 		new(int),
 	} {
@@ -122,7 +123,7 @@ func TestTypeByName(t *testing.T) {
 	}
 
 	// spec.TypeByName MUST return the same address for multiple calls with the same type name.
-	var iphdr1, iphdr2 *Struct
+	var iphdr1, iphdr2 *types.Struct
 	if err := spec.TypeByName("iphdr", &iphdr1); err != nil {
 		t.Fatal(err)
 	}
@@ -137,11 +138,11 @@ func TestTypeByName(t *testing.T) {
 	for _, m := range iphdr1.Members {
 		if m.Name == "version" {
 			// __u8 is a typedef
-			td, ok := m.Type.(*Typedef)
+			td, ok := m.Type.(*types.Typedef)
 			if !ok {
 				t.Fatalf("version member of iphdr should be a __u8 typedef: actual: %T", m.Type)
 			}
-			u8int, ok := td.Type.(*Int)
+			u8int, ok := td.Type.(*types.Int)
 			if !ok {
 				t.Fatalf("__u8 typedef should point to an Int type: actual: %T", td.Type)
 			}
@@ -219,34 +220,34 @@ func TestLoadSpecFromElf(t *testing.T) {
 		if err != nil {
 			t.Error("Can't retrieve void type by ID:", err)
 		}
-		if _, ok := vt.(*Void); !ok {
+		if _, ok := vt.(*types.Void); !ok {
 			t.Errorf("Expected Void for type id 0, but got: %T", vt)
 		}
 
-		var bpfMapDef *Struct
+		var bpfMapDef *types.Struct
 		if err := spec.TypeByName("bpf_map_def", &bpfMapDef); err != nil {
 			t.Error("Can't find bpf_map_def:", err)
 		}
 
-		var tmp *Void
+		var tmp *types.Void
 		if err := spec.TypeByName("totally_bogus_type", &tmp); !errors.Is(err, ErrNotFound) {
 			t.Error("TypeByName doesn't return ErrNotFound:", err)
 		}
 
-		var fn *Func
+		var fn *types.Func
 		if err := spec.TypeByName("global_fn", &fn); err != nil {
 			t.Error("Can't find global_fn():", err)
 		} else {
-			if fn.Linkage != GlobalFunc {
+			if fn.Linkage != types.GlobalFunc {
 				t.Error("Expected global linkage:", fn)
 			}
 		}
 
-		var v *Var
+		var v *types.Var
 		if err := spec.TypeByName("key3", &v); err != nil {
 			t.Error("Cant find key3:", err)
 		} else {
-			if v.Linkage != GlobalVar {
+			if v.Linkage != types.GlobalVar {
 				t.Error("Expected global linkage:", v)
 			}
 		}
@@ -293,7 +294,7 @@ func TestSpecCopy(t *testing.T) {
 
 	cpy := spec.Copy()
 	for i := range cpy.types {
-		if _, ok := cpy.types[i].(*Void); ok {
+		if _, ok := cpy.types[i].(*types.Void); ok {
 			// Since Void is an empty struct, a Type interface value containing
 			// &Void{} stores (*Void, nil). Since interface equality first compares
 			// the type and then the concrete value, Void is always equal.
@@ -319,7 +320,7 @@ func ExampleSpec_TypeByName() {
 	spec := new(Spec)
 
 	// Declare a variable of the desired type
-	var foo *Struct
+	var foo *types.Struct
 
 	if err := spec.TypeByName("foo", &foo); err != nil {
 		// There is no struct with name foo, or there

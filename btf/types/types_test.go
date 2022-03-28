@@ -1,4 +1,4 @@
-package btf
+package types
 
 import (
 	"fmt"
@@ -35,10 +35,10 @@ func TestSizeof(t *testing.T) {
 }
 
 func TestCopyType(t *testing.T) {
-	_, _ = copyType((*Void)(nil), nil)
+	_, _ = CopyType((*Void)(nil), nil)
 
 	in := &Int{Size: 4}
-	out, _ := copyType(in, nil)
+	out, _ := CopyType(in, nil)
 
 	in.Size = 8
 	if size := out.(*Int).Size; size != 4 {
@@ -46,13 +46,13 @@ func TestCopyType(t *testing.T) {
 	}
 
 	t.Run("cyclical", func(t *testing.T) {
-		_, _ = copyType(newCyclicalType(2), nil)
+		_, _ = CopyType(newCyclicalType(2), nil)
 	})
 
 	t.Run("identity", func(t *testing.T) {
 		u16 := &Int{Size: 2}
 
-		out, _ := copyType(&Struct{
+		out, _ := CopyType(&Struct{
 			Members: []Member{
 				{Name: "a", Type: u16},
 				{Name: "b", Type: u16},
@@ -137,9 +137,9 @@ func TestType(t *testing.T) {
 				t.Error("Copy doesn't copy")
 			}
 
-			var first, second typeDeque
-			typ.walk(&first)
-			typ.walk(&second)
+			var first, second TypeDeque
+			typ.Walk(&first)
+			typ.Walk(&second)
 
 			if diff := cmp.Diff(first.all(), second.all(), compareTypes); diff != "" {
 				t.Errorf("Walk mismatch (-want +got):\n%s", diff)
@@ -152,7 +152,7 @@ func TestTypeDeque(t *testing.T) {
 	a, b := new(Type), new(Type)
 
 	t.Run("pop", func(t *testing.T) {
-		var td typeDeque
+		var td TypeDeque
 		td.push(a)
 		td.push(b)
 
@@ -170,46 +170,46 @@ func TestTypeDeque(t *testing.T) {
 	})
 
 	t.Run("shift", func(t *testing.T) {
-		var td typeDeque
+		var td TypeDeque
 		td.push(a)
 		td.push(b)
 
-		if td.shift() != a {
+		if td.Shift() != a {
 			t.Error("Didn't shift a second")
 		}
 
-		if td.shift() != b {
+		if td.Shift() != b {
 			t.Error("Didn't shift b first")
 		}
 
-		if td.shift() != nil {
+		if td.Shift() != nil {
 			t.Error("Didn't shift nil")
 		}
 	})
 
 	t.Run("push", func(t *testing.T) {
-		var td typeDeque
+		var td TypeDeque
 		td.push(a)
 		td.push(b)
-		td.shift()
+		td.Shift()
 
 		ts := make([]Type, 12)
 		for i := range ts {
 			td.push(&ts[i])
 		}
 
-		if td.shift() != b {
+		if td.Shift() != b {
 			t.Error("Didn't shift b first")
 		}
 		for i := range ts {
-			if td.shift() != &ts[i] {
+			if td.Shift() != &ts[i] {
 				t.Fatal("Shifted wrong Type at pos", i)
 			}
 		}
 	})
 
 	t.Run("all", func(t *testing.T) {
-		var td typeDeque
+		var td TypeDeque
 		td.push(a)
 		td.push(b)
 

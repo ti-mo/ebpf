@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/cilium/ebpf/asm"
+	"github.com/cilium/ebpf/btf/types"
 	"github.com/cilium/ebpf/internal"
 	"github.com/cilium/ebpf/internal/btf"
 	"github.com/cilium/ebpf/internal/unix"
@@ -655,7 +656,7 @@ func (ec *elfCode) loadBTFMaps(maps map[string]*MapSpec) error {
 		}
 
 		// Each section must appear as a DataSec in the ELF's BTF blob.
-		var ds *btf.Datasec
+		var ds *types.Datasec
 		if err := ec.btf.TypeByName(sec.Name, &ds); err != nil {
 			return fmt.Errorf("cannot find section '%s' in BTF: %w", sec.Name, err)
 		}
@@ -668,7 +669,7 @@ func (ec *elfCode) loadBTFMaps(maps map[string]*MapSpec) error {
 		for _, vs := range ds.Vars {
 			// BPF maps are declared as and assigned to global variables,
 			// so iterate over each Var in the DataSec and validate their types.
-			v, ok := vs.Type.(*btf.Var)
+			v, ok := vs.Type.(*types.Var)
 			if !ok {
 				return fmt.Errorf("section %v: unexpected type %s", sec.Name, vs.Type)
 			}
@@ -688,7 +689,7 @@ func (ec *elfCode) loadBTFMaps(maps map[string]*MapSpec) error {
 			}
 
 			// Each Var representing a BTF map definition contains a Struct.
-			mapStruct, ok := v.Type.(*btf.Struct)
+			mapStruct, ok := v.Type.(*types.Struct)
 			if !ok {
 				return fmt.Errorf("expected struct, got %s", v.Type)
 			}
@@ -722,9 +723,9 @@ func (ec *elfCode) loadBTFMaps(maps map[string]*MapSpec) error {
 // mapSpecFromBTF produces a MapSpec based on a btf.Struct def representing
 // a BTF map definition. The name and spec arguments will be copied to the
 // resulting MapSpec, and inner must be true on any resursive invocations.
-func mapSpecFromBTF(es *elfSection, vs *btf.VarSecinfo, def *btf.Struct, spec *btf.Spec, name string, inner bool) (*MapSpec, error) {
+func mapSpecFromBTF(es *elfSection, vs *types.VarSecinfo, def *types.Struct, spec *btf.Spec, name string, inner bool) (*MapSpec, error) {
 	var (
-		key, value         btf.Type
+		key, value         types.Type
 		keySize, valueSize uint32
 		mapType            MapType
 		flags, maxEntries  uint32
@@ -760,14 +761,14 @@ func mapSpecFromBTF(es *elfSection, vs *btf.VarSecinfo, def *btf.Struct, spec *b
 				return nil, errors.New("both key and key_size given")
 			}
 
-			pk, ok := member.Type.(*btf.Pointer)
+			pk, ok := member.Type.(*types.Pointer)
 			if !ok {
 				return nil, fmt.Errorf("key type is not a pointer: %T", member.Type)
 			}
 
 			key = pk.Target
 
-			size, err := btf.Sizeof(pk.Target)
+			size, err := types.Sizeof(pk.Target)
 			if err != nil {
 				return nil, fmt.Errorf("can't get size of BTF key: %w", err)
 			}
@@ -779,14 +780,14 @@ func mapSpecFromBTF(es *elfSection, vs *btf.VarSecinfo, def *btf.Struct, spec *b
 				return nil, errors.New("both value and value_size given")
 			}
 
-			vk, ok := member.Type.(*btf.Pointer)
+			vk, ok := member.Type.(*types.Pointer)
 			if !ok {
 				return nil, fmt.Errorf("value type is not a pointer: %T", member.Type)
 			}
 
 			value = vk.Target
 
-			size, err := btf.Sizeof(vk.Target)
+			size, err := types.Sizeof(vk.Target)
 			if err != nil {
 				return nil, fmt.Errorf("can't get size of BTF value: %w", err)
 			}
@@ -848,7 +849,7 @@ func mapSpecFromBTF(es *elfSection, vs *btf.VarSecinfo, def *btf.Struct, spec *b
 			}
 
 			switch t := valueType.(type) {
-			case *btf.Struct:
+			case *types.Struct:
 				// The values member pointing to an array of structs means we're expecting
 				// a map-in-map declaration.
 				if mapType != ArrayOfMaps && mapType != HashOfMaps {
@@ -870,7 +871,7 @@ func mapSpecFromBTF(es *elfSection, vs *btf.VarSecinfo, def *btf.Struct, spec *b
 					return nil, fmt.Errorf("can't parse BTF map definition of inner map: %w", err)
 				}
 
-			case *btf.FuncProto:
+			case *types.FuncProto:
 				// The values member contains an array of function pointers, meaning an
 				// autopopulated PROG_ARRAY.
 				if mapType != ProgramArray {
@@ -892,10 +893,10 @@ func mapSpecFromBTF(es *elfSection, vs *btf.VarSecinfo, def *btf.Struct, spec *b
 	}
 
 	if key == nil {
-		key = &btf.Void{}
+		key = &types.Void{}
 	}
 	if value == nil {
-		value = &btf.Void{}
+		value = &types.Void{}
 	}
 
 	return &MapSpec{
@@ -914,13 +915,13 @@ func mapSpecFromBTF(es *elfSection, vs *btf.VarSecinfo, def *btf.Struct, spec *b
 
 // uintFromBTF resolves the __uint macro, which is a pointer to a sized
 // array, e.g. for int (*foo)[10], this function will return 10.
-func uintFromBTF(typ btf.Type) (uint32, error) {
-	ptr, ok := typ.(*btf.Pointer)
+func uintFromBTF(typ types.Type) (uint32, error) {
+	ptr, ok := typ.(*types.Pointer)
 	if !ok {
 		return 0, fmt.Errorf("not a pointer: %v", typ)
 	}
 
-	arr, ok := ptr.Target.(*btf.Array)
+	arr, ok := ptr.Target.(*types.Array)
 	if !ok {
 		return 0, fmt.Errorf("not a pointer to array: %v", typ)
 	}
@@ -931,13 +932,13 @@ func uintFromBTF(typ btf.Type) (uint32, error) {
 // resolveBTFArrayMacro resolves the __array macro, which declares an array
 // of pointers to a given type. This function returns the target Type of
 // the pointers in the array.
-func resolveBTFArrayMacro(typ btf.Type) (btf.Type, error) {
-	arr, ok := typ.(*btf.Array)
+func resolveBTFArrayMacro(typ types.Type) (types.Type, error) {
+	arr, ok := typ.(*types.Array)
 	if !ok {
 		return nil, fmt.Errorf("not an array: %v", typ)
 	}
 
-	ptr, ok := arr.Type.(*btf.Pointer)
+	ptr, ok := arr.Type.(*types.Pointer)
 	if !ok {
 		return nil, fmt.Errorf("not an array of pointers: %v", typ)
 	}
@@ -946,10 +947,10 @@ func resolveBTFArrayMacro(typ btf.Type) (btf.Type, error) {
 }
 
 // resolveBTFValuesContents resolves relocations into ELF sections belonging
-// to btf.VarSecinfo's. This can be used on the 'values' member in BTF map
+// to types.VarSecinfo's. This can be used on the 'values' member in BTF map
 // definitions to extract static declarations of map contents.
-func resolveBTFValuesContents(es *elfSection, vs *btf.VarSecinfo, member btf.Member) ([]MapKV, error) {
-	// The elements of a .values pointer array are not encoded in BTF.
+func resolveBTFValuesContents(es *elfSection, vs *types.VarSecinfo, member types.Member) ([]MapKV, error) {
+	// The elements of a .values pointer array are not encoded in types.
 	// Instead, relocations are generated into each array index.
 	// However, it's possible to leave certain array indices empty, so all
 	// indices' offsets need to be checked for emitted relocations.
@@ -1019,7 +1020,7 @@ func (ec *elfCode) loadDataSections(maps map[string]*MapSpec) error {
 			return errors.New("data sections require BTF, make sure all consts are marked as static")
 		}
 
-		var datasec *btf.Datasec
+		var datasec *types.Datasec
 		if err := ec.btf.TypeByName(sec.Name, &datasec); err != nil {
 			return fmt.Errorf("data section %s: can't get BTF: %w", sec.Name, err)
 		}
@@ -1040,7 +1041,7 @@ func (ec *elfCode) loadDataSections(maps map[string]*MapSpec) error {
 			ValueSize:  uint32(len(data)),
 			MaxEntries: 1,
 			Contents:   []MapKV{{uint32(0), data}},
-			BTF:        &btf.Map{Spec: ec.btf, Key: &btf.Void{}, Value: datasec},
+			BTF:        &btf.Map{Spec: ec.btf, Key: &types.Void{}, Value: datasec},
 		}
 
 		switch sec.Name {

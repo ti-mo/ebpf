@@ -8,6 +8,7 @@ import (
 	"math"
 
 	"github.com/cilium/ebpf/asm"
+	"github.com/cilium/ebpf/btf/types"
 	"github.com/cilium/ebpf/internal"
 )
 
@@ -201,16 +202,16 @@ func parseExtInfoRecordSize(r io.Reader, bo binary.ByteOrder) (uint32, error) {
 var FuncInfoSize = uint32(binary.Size(bpfFuncInfo{}))
 
 type FuncInfo struct {
-	fn *Func
+	fn *types.Func
 }
 
 type bpfFuncInfo struct {
 	// Instruction offset of the function within an ELF section.
 	InsnOff uint32
-	TypeID  TypeID
+	TypeID  types.TypeID
 }
 
-func (fi *FuncInfo) Func() *Func {
+func (fi *FuncInfo) Func() *types.Func {
 	return fi.fn
 }
 
@@ -433,14 +434,14 @@ func parseLineInfoRecords(r io.Reader, bo binary.ByteOrder, recordSize uint32, r
 // bpfCORERelo matches the kernel's struct bpf_core_relo.
 type bpfCORERelo struct {
 	InsnOff      uint32
-	TypeID       TypeID
+	TypeID       types.TypeID
 	AccessStrOff uint32
 	Kind         coreKind
 }
 
 type CORERelocation struct {
 	insnOff  uint32
-	typeID   TypeID
+	typeID   types.TypeID
 	accessor coreAccessor
 	kind     coreKind
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cilium/ebpf/btf/types"
 	"github.com/cilium/ebpf/internal/testutils"
 	"github.com/google/go-cmp/cmp"
 
@@ -15,35 +16,35 @@ import (
 
 func TestCOREAreTypesCompatible(t *testing.T) {
 	tests := []struct {
-		a, b       Type
+		a, b       types.Type
 		compatible bool
 	}{
-		{&Void{}, &Void{}, true},
-		{&Struct{Name: "a"}, &Struct{Name: "b"}, true},
-		{&Union{Name: "a"}, &Union{Name: "b"}, true},
-		{&Union{Name: "a"}, &Struct{Name: "b"}, false},
-		{&Enum{Name: "a"}, &Enum{Name: "b"}, true},
-		{&Fwd{Name: "a"}, &Fwd{Name: "b"}, true},
-		{&Int{Name: "a", Size: 2}, &Int{Name: "b", Size: 4}, true},
-		{&Int{OffsetBits: 1}, &Int{}, false},
-		{&Pointer{Target: &Void{}}, &Pointer{Target: &Void{}}, true},
-		{&Pointer{Target: &Void{}}, &Void{}, false},
-		{&Array{Type: &Void{}}, &Array{Type: &Void{}}, true},
-		{&Array{Type: &Int{}}, &Array{Type: &Void{}}, false},
-		{&FuncProto{Return: &Int{}}, &FuncProto{Return: &Void{}}, false},
+		{&types.Void{}, &types.Void{}, true},
+		{&types.Struct{Name: "a"}, &types.Struct{Name: "b"}, true},
+		{&types.Union{Name: "a"}, &types.Union{Name: "b"}, true},
+		{&types.Union{Name: "a"}, &types.Struct{Name: "b"}, false},
+		{&types.Enum{Name: "a"}, &types.Enum{Name: "b"}, true},
+		{&types.Fwd{Name: "a"}, &types.Fwd{Name: "b"}, true},
+		{&types.Int{Name: "a", Size: 2}, &types.Int{Name: "b", Size: 4}, true},
+		{&types.Int{OffsetBits: 1}, &types.Int{}, false},
+		{&types.Pointer{Target: &types.Void{}}, &types.Pointer{Target: &types.Void{}}, true},
+		{&types.Pointer{Target: &types.Void{}}, &types.Void{}, false},
+		{&types.Array{Type: &types.Void{}}, &types.Array{Type: &types.Void{}}, true},
+		{&types.Array{Type: &types.Int{}}, &types.Array{Type: &types.Void{}}, false},
+		{&types.FuncProto{Return: &types.Int{}}, &types.FuncProto{Return: &types.Void{}}, false},
 		{
-			&FuncProto{Return: &Void{}, Params: []FuncParam{{Name: "a", Type: &Void{}}}},
-			&FuncProto{Return: &Void{}, Params: []FuncParam{{Name: "b", Type: &Void{}}}},
+			&types.FuncProto{Return: &types.Void{}, Params: []types.FuncParam{{Name: "a", Type: &types.Void{}}}},
+			&types.FuncProto{Return: &types.Void{}, Params: []types.FuncParam{{Name: "b", Type: &types.Void{}}}},
 			true,
 		},
 		{
-			&FuncProto{Return: &Void{}, Params: []FuncParam{{Type: &Void{}}}},
-			&FuncProto{Return: &Void{}, Params: []FuncParam{{Type: &Int{}}}},
+			&types.FuncProto{Return: &types.Void{}, Params: []types.FuncParam{{Type: &types.Void{}}}},
+			&types.FuncProto{Return: &types.Void{}, Params: []types.FuncParam{{Type: &types.Int{}}}},
 			false,
 		},
 		{
-			&FuncProto{Return: &Void{}, Params: []FuncParam{{Type: &Void{}}, {Type: &Void{}}}},
-			&FuncProto{Return: &Void{}, Params: []FuncParam{{Type: &Void{}}}},
+			&types.FuncProto{Return: &types.Void{}, Params: []types.FuncParam{{Type: &types.Void{}}, {Type: &types.Void{}}}},
+			&types.FuncProto{Return: &types.Void{}, Params: []types.FuncParam{{Type: &types.Void{}}}},
 			false,
 		},
 	}
@@ -74,7 +75,7 @@ func TestCOREAreTypesCompatible(t *testing.T) {
 		}
 	}
 
-	for _, invalid := range []Type{&Var{}, &Datasec{}} {
+	for _, invalid := range []types.Type{&types.Var{}, &types.Datasec{}} {
 		err := coreAreTypesCompatible(invalid, invalid)
 		if errors.Is(err, errImpossibleRelocation) {
 			t.Errorf("Expected an error for %T, not errImpossibleRelocation", invalid)
@@ -86,24 +87,24 @@ func TestCOREAreTypesCompatible(t *testing.T) {
 
 func TestCOREAreMembersCompatible(t *testing.T) {
 	tests := []struct {
-		a, b       Type
+		a, b       types.Type
 		compatible bool
 	}{
-		{&Struct{Name: "a"}, &Struct{Name: "b"}, true},
-		{&Union{Name: "a"}, &Union{Name: "b"}, true},
-		{&Union{Name: "a"}, &Struct{Name: "b"}, true},
-		{&Enum{Name: "a"}, &Enum{Name: "b"}, false},
-		{&Enum{Name: "a"}, &Enum{Name: "a___foo"}, true},
-		{&Enum{Name: "a"}, &Enum{Name: ""}, true},
-		{&Fwd{Name: "a"}, &Fwd{Name: "b"}, false},
-		{&Fwd{Name: "a"}, &Fwd{Name: "a___foo"}, true},
-		{&Fwd{Name: "a"}, &Fwd{Name: ""}, true},
-		{&Int{Name: "a", Size: 2}, &Int{Name: "b", Size: 4}, true},
-		{&Int{OffsetBits: 1}, &Int{}, false},
-		{&Pointer{Target: &Void{}}, &Pointer{Target: &Void{}}, true},
-		{&Pointer{Target: &Void{}}, &Void{}, false},
-		{&Array{Type: &Int{Size: 1}}, &Array{Type: &Int{Encoding: Signed}}, true},
-		{&Float{Size: 2}, &Float{Size: 4}, true},
+		{&types.Struct{Name: "a"}, &types.Struct{Name: "b"}, true},
+		{&types.Union{Name: "a"}, &types.Union{Name: "b"}, true},
+		{&types.Union{Name: "a"}, &types.Struct{Name: "b"}, true},
+		{&types.Enum{Name: "a"}, &types.Enum{Name: "b"}, false},
+		{&types.Enum{Name: "a"}, &types.Enum{Name: "a___foo"}, true},
+		{&types.Enum{Name: "a"}, &types.Enum{Name: ""}, true},
+		{&types.Fwd{Name: "a"}, &types.Fwd{Name: "b"}, false},
+		{&types.Fwd{Name: "a"}, &types.Fwd{Name: "a___foo"}, true},
+		{&types.Fwd{Name: "a"}, &types.Fwd{Name: ""}, true},
+		{&types.Int{Name: "a", Size: 2}, &types.Int{Name: "b", Size: 4}, true},
+		{&types.Int{OffsetBits: 1}, &types.Int{}, false},
+		{&types.Pointer{Target: &types.Void{}}, &types.Pointer{Target: &types.Void{}}, true},
+		{&types.Pointer{Target: &types.Void{}}, &types.Void{}, false},
+		{&types.Array{Type: &types.Int{Size: 1}}, &types.Array{Type: &types.Int{Encoding: types.Signed}}, true},
+		{&types.Float{Size: 2}, &types.Float{Size: 4}, true},
 	}
 
 	for _, test := range tests {
@@ -132,7 +133,7 @@ func TestCOREAreMembersCompatible(t *testing.T) {
 		}
 	}
 
-	for _, invalid := range []Type{&Void{}, &FuncProto{}, &Var{}, &Datasec{}} {
+	for _, invalid := range []types.Type{&types.Void{}, &types.FuncProto{}, &types.Var{}, &types.Datasec{}} {
 		err := coreAreMembersCompatible(invalid, invalid)
 		if errors.Is(err, errImpossibleRelocation) {
 			t.Errorf("Expected an error for %T, not errImpossibleRelocation", invalid)
@@ -170,8 +171,8 @@ func TestCOREAccessor(t *testing.T) {
 }
 
 func TestCOREFindEnumValue(t *testing.T) {
-	a := &Enum{Values: []EnumValue{{"foo", 23}, {"bar", 42}}}
-	b := &Enum{Values: []EnumValue{
+	a := &types.Enum{Values: []types.EnumValue{{"foo", 23}, {"bar", 42}}}
+	b := &types.Enum{Values: []types.EnumValue{
 		{"foo___flavour", 0},
 		{"bar", 123},
 		{"garbage", 3},
@@ -179,14 +180,14 @@ func TestCOREFindEnumValue(t *testing.T) {
 
 	invalid := []struct {
 		name   string
-		local  Type
-		target Type
+		local  types.Type
+		target types.Type
 		acc    coreAccessor
 		err    error
 	}{
 		{"o-o-b accessor", a, b, coreAccessor{len(a.Values)}, nil},
 		{"long accessor", a, b, coreAccessor{0, 1}, nil},
-		{"wrong target", a, &Void{}, coreAccessor{0, 1}, nil},
+		{"wrong target", a, &types.Void{}, coreAccessor{0, 1}, nil},
 		{
 			"no matching value",
 			b, a,
@@ -209,7 +210,7 @@ func TestCOREFindEnumValue(t *testing.T) {
 
 	valid := []struct {
 		name                    string
-		local, target           Type
+		local, target           types.Type
 		acc                     coreAccessor
 		localValue, targetValue int32
 	}{
@@ -228,17 +229,17 @@ func TestCOREFindEnumValue(t *testing.T) {
 }
 
 func TestCOREFindField(t *testing.T) {
-	ptr := &Pointer{}
-	u16 := &Int{Size: 2}
-	u32 := &Int{Size: 4}
-	aFields := []Member{
+	ptr := &types.Pointer{}
+	u16 := &types.Int{Size: 2}
+	u32 := &types.Int{Size: 4}
+	aFields := []types.Member{
 		{Name: "foo", Type: ptr, OffsetBits: 8},
 		{Name: "bar", Type: u16, OffsetBits: 16},
 		{Name: "baz", Type: u32, OffsetBits: 32, BitfieldSize: 3},
 		{Name: "quux", Type: u32, OffsetBits: 35, BitfieldSize: 10},
 		{Name: "quuz", Type: u32, OffsetBits: 45, BitfieldSize: 8},
 	}
-	bFields := []Member{
+	bFields := []types.Member{
 		{Name: "foo", Type: ptr, OffsetBits: 16},
 		{Name: "bar", Type: u32, OffsetBits: 8},
 		{Name: "other", OffsetBits: 4},
@@ -250,26 +251,26 @@ func TestCOREFindField(t *testing.T) {
 		{Name: "quuz", Type: u16, OffsetBits: 112},
 	}
 
-	aStruct := &Struct{Members: aFields, Size: 48}
-	bStruct := &Struct{Members: bFields, Size: 80}
-	aArray := &Array{Nelems: 4, Type: u16}
-	bArray := &Array{Nelems: 3, Type: u32}
+	aStruct := &types.Struct{Members: aFields, Size: 48}
+	bStruct := &types.Struct{Members: bFields, Size: 80}
+	aArray := &types.Array{Nelems: 4, Type: u16}
+	bArray := &types.Array{Nelems: 3, Type: u32}
 
 	invalid := []struct {
 		name          string
-		local, target Type
+		local, target types.Type
 		acc           coreAccessor
 		err           error
 	}{
 		{
 			"unsupported type",
-			&Void{}, &Void{},
+			&types.Void{}, &types.Void{},
 			coreAccessor{0, 0},
 			ErrNotSupported,
 		},
 		{
 			"different types",
-			&Union{}, &Array{Type: u16},
+			&types.Union{}, &types.Array{Type: u16},
 			coreAccessor{0},
 			errImpossibleRelocation,
 		},
@@ -299,8 +300,8 @@ func TestCOREFindField(t *testing.T) {
 		},
 		{
 			"incompatible match",
-			&Union{Members: []Member{{Name: "foo", Type: &Pointer{}}}},
-			&Union{Members: []Member{{Name: "foo", Type: &Int{}}}},
+			&types.Union{Members: []types.Member{{Name: "foo", Type: &types.Pointer{}}}},
+			&types.Union{Members: []types.Member{{Name: "foo", Type: &types.Int{}}}},
 			coreAccessor{0, 0},
 			errImpossibleRelocation,
 		},
@@ -319,30 +320,30 @@ func TestCOREFindField(t *testing.T) {
 		})
 	}
 
-	bytes := func(typ Type) uint32 {
-		sz, err := Sizeof(typ)
+	bytes := func(typ types.Type) uint32 {
+		sz, err := types.Sizeof(typ)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return uint32(sz)
 	}
 
-	anon := func(t Type, offset uint32) []Member {
-		return []Member{{Type: t, OffsetBits: offset}}
+	anon := func(t types.Type, offset uint32) []types.Member {
+		return []types.Member{{Type: t, OffsetBits: offset}}
 	}
 
-	anonStruct := func(m ...Member) Member {
-		return Member{Type: &Struct{Members: m}}
+	anonStruct := func(m ...types.Member) types.Member {
+		return types.Member{Type: &types.Struct{Members: m}}
 	}
 
-	anonUnion := func(m ...Member) Member {
-		return Member{Type: &Union{Members: m}}
+	anonUnion := func(m ...types.Member) types.Member {
+		return types.Member{Type: &types.Union{Members: m}}
 	}
 
 	valid := []struct {
 		name                    string
-		local                   Type
-		target                  Type
+		local                   types.Type
+		target                  types.Type
 		acc                     coreAccessor
 		localField, targetField coreField
 	}{
@@ -380,8 +381,8 @@ func TestCOREFindField(t *testing.T) {
 		},
 		{
 			"flex array",
-			&Struct{Members: []Member{{Name: "foo", Type: &Array{Nelems: 0, Type: u16}}}},
-			&Struct{Members: []Member{{Name: "foo", Type: &Array{Nelems: 0, Type: u32}}}},
+			&types.Struct{Members: []types.Member{{Name: "foo", Type: &types.Array{Nelems: 0, Type: u16}}}},
+			&types.Struct{Members: []types.Member{{Name: "foo", Type: &types.Array{Nelems: 0, Type: u32}}}},
 			coreAccessor{0, 0, 9000},
 			coreField{u16, bytes(u16) * 9000, 0, 0},
 			coreField{u32, bytes(u32) * 9000, 0, 0},
@@ -395,7 +396,7 @@ func TestCOREFindField(t *testing.T) {
 		},
 		{
 			"struct.0 anon",
-			aStruct, &Struct{Members: anon(bStruct, 24)},
+			aStruct, &types.Struct{Members: anon(bStruct, 24)},
 			coreAccessor{0, 0},
 			coreField{ptr, 1, 0, 0},
 			coreField{ptr, 3 + 2, 0, 0},
@@ -416,29 +417,29 @@ func TestCOREFindField(t *testing.T) {
 		},
 		{
 			"struct.1 anon",
-			aStruct, &Struct{Members: anon(bStruct, 24)},
+			aStruct, &types.Struct{Members: anon(bStruct, 24)},
 			coreAccessor{0, 1},
 			coreField{u16, 2, 0, 0},
 			coreField{u32, 3 + 1, 0, 0},
 		},
 		{
 			"union.1",
-			&Union{Members: aFields, Size: 32},
-			&Union{Members: bFields, Size: 32},
+			&types.Union{Members: aFields, Size: 32},
+			&types.Union{Members: bFields, Size: 32},
 			coreAccessor{0, 1},
 			coreField{u16, 2, 0, 0},
 			coreField{u32, 1, 0, 0},
 		},
 		{
 			"interchangeable composites",
-			&Struct{
-				Members: []Member{
-					anonStruct(anonUnion(Member{Name: "_1", Type: u16})),
+			&types.Struct{
+				Members: []types.Member{
+					anonStruct(anonUnion(types.Member{Name: "_1", Type: u16})),
 				},
 			},
-			&Struct{
-				Members: []Member{
-					anonUnion(anonStruct(Member{Name: "_1", Type: u16})),
+			&types.Struct{
+				Members: []types.Member{
+					anonUnion(anonStruct(types.Member{Name: "_1", Type: u16})),
 				},
 			},
 			coreAccessor{0, 0, 0, 0},
@@ -488,24 +489,24 @@ func TestCOREFindField(t *testing.T) {
 }
 
 func TestCOREFindFieldCyclical(t *testing.T) {
-	members := []Member{{Name: "foo", Type: &Pointer{}}}
+	members := []types.Member{{Name: "foo", Type: &types.Pointer{}}}
 
-	cyclicStruct := &Struct{}
-	cyclicStruct.Members = []Member{{Type: cyclicStruct}}
+	cyclicStruct := &types.Struct{}
+	cyclicStruct.Members = []types.Member{{Type: cyclicStruct}}
 
-	cyclicUnion := &Union{}
-	cyclicUnion.Members = []Member{{Type: cyclicUnion}}
+	cyclicUnion := &types.Union{}
+	cyclicUnion.Members = []types.Member{{Type: cyclicUnion}}
 
-	cyclicArray := &Array{Nelems: 1}
-	cyclicArray.Type = &Pointer{Target: cyclicArray}
+	cyclicArray := &types.Array{Nelems: 1}
+	cyclicArray.Type = &types.Pointer{Target: cyclicArray}
 
 	tests := []struct {
 		name          string
-		local, cyclic Type
+		local, cyclic types.Type
 	}{
-		{"struct", &Struct{Members: members}, cyclicStruct},
-		{"union", &Union{Members: members}, cyclicUnion},
-		{"array", &Array{Nelems: 2, Type: &Int{}}, cyclicArray},
+		{"struct", &types.Struct{Members: members}, cyclicStruct},
+		{"union", &types.Union{Members: members}, cyclicUnion},
+		{"array", &types.Array{Nelems: 2, Type: &types.Int{}}, cyclicArray},
 	}
 
 	for _, test := range tests {
@@ -571,20 +572,20 @@ func TestCORERelocation(t *testing.T) {
 func TestCORECopyWithoutQualifiers(t *testing.T) {
 	qualifiers := []struct {
 		name string
-		fn   func(Type) Type
+		fn   func(types.Type) types.Type
 	}{
-		{"const", func(t Type) Type { return &Const{Type: t} }},
-		{"volatile", func(t Type) Type { return &Volatile{Type: t} }},
-		{"restrict", func(t Type) Type { return &Restrict{Type: t} }},
-		{"typedef", func(t Type) Type { return &Typedef{Type: t} }},
+		{"const", func(t types.Type) types.Type { return &types.Const{Type: t} }},
+		{"volatile", func(t types.Type) types.Type { return &types.Volatile{Type: t} }},
+		{"restrict", func(t types.Type) types.Type { return &types.Restrict{Type: t} }},
+		{"typedef", func(t types.Type) types.Type { return &types.Typedef{Type: t} }},
 	}
 
 	for _, test := range qualifiers {
 		t.Run(test.name+" cycle", func(t *testing.T) {
-			root := &Volatile{}
+			root := &types.Volatile{}
 			root.Type = test.fn(root)
 
-			_, err := copyType(root, skipQualifiersAndTypedefs)
+			_, err := types.CopyType(root, types.SkipQualifiersAndTypedefs)
 			qt.Assert(t, err, qt.Not(qt.IsNil))
 		})
 	}
@@ -592,10 +593,10 @@ func TestCORECopyWithoutQualifiers(t *testing.T) {
 	for _, a := range qualifiers {
 		for _, b := range qualifiers {
 			t.Run(a.name+" "+b.name, func(t *testing.T) {
-				v := a.fn(&Pointer{Target: b.fn(&Int{Name: "z"})})
-				want := &Pointer{Target: &Int{Name: "z"}}
+				v := a.fn(&types.Pointer{Target: b.fn(&types.Int{Name: "z"})})
+				want := &types.Pointer{Target: &types.Int{Name: "z"}}
 
-				got, err := copyType(v, skipQualifiersAndTypedefs)
+				got, err := types.CopyType(v, types.SkipQualifiersAndTypedefs)
 				qt.Assert(t, err, qt.IsNil)
 				qt.Assert(t, got, qt.DeepEquals, want)
 			})
@@ -603,15 +604,15 @@ func TestCORECopyWithoutQualifiers(t *testing.T) {
 	}
 
 	t.Run("long chain", func(t *testing.T) {
-		root := &Int{Name: "abc"}
-		v := Type(root)
+		root := &types.Int{Name: "abc"}
+		v := types.Type(root)
 		for i := 0; i < maxTypeDepth; i++ {
 			q := qualifiers[rand.Intn(len(qualifiers))]
 			v = q.fn(v)
 			t.Log(q.name)
 		}
 
-		got, err := copyType(v, skipQualifiersAndTypedefs)
+		got, err := types.CopyType(v, types.SkipQualifiersAndTypedefs)
 		qt.Assert(t, err, qt.IsNil)
 		qt.Assert(t, got, qt.DeepEquals, root)
 	})

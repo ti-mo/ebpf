@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/cilium/ebpf/btf/types"
 )
 
 var errNestedTooDeep = errors.New("nested too deep")
@@ -16,7 +18,7 @@ type GoFormatter struct {
 
 	// Types present in this map are referred to using the given name if they
 	// are encountered when outputting another type.
-	Names map[Type]string
+	Names map[types.Type]string
 
 	// Identifier is called for each field of struct-like types. By default the
 	// field name is used as is.
@@ -28,7 +30,7 @@ type GoFormatter struct {
 }
 
 // TypeDeclaration generates a Go type declaration for a BTF type.
-func (gf *GoFormatter) TypeDeclaration(name string, typ Type) (string, error) {
+func (gf *GoFormatter) TypeDeclaration(name string, typ types.Type) (string, error) {
 	gf.w.Reset()
 	if err := gf.writeTypeDecl(name, typ); err != nil {
 		return "", err
@@ -58,18 +60,18 @@ func (gf *GoFormatter) enumIdentifier(name, element string) string {
 //
 //     type foo struct { bar uint32; }
 //     type bar int32
-func (gf *GoFormatter) writeTypeDecl(name string, typ Type) error {
+func (gf *GoFormatter) writeTypeDecl(name string, typ types.Type) error {
 	if name == "" {
 		return fmt.Errorf("need a name for type %s", typ)
 	}
 
-	typ, err := skipQualifiers(typ)
+	typ, err := types.SkipQualifiers(typ)
 	if err != nil {
 		return err
 	}
 
 	switch v := typ.(type) {
-	case *Enum:
+	case *types.Enum:
 		fmt.Fprintf(&gf.w, "type %s int32", name)
 		if len(v.Values) == 0 {
 			return nil
@@ -95,8 +97,8 @@ func (gf *GoFormatter) writeTypeDecl(name string, typ Type) error {
 //
 //     foo                  (if foo is a named type)
 //     uint32
-func (gf *GoFormatter) writeType(typ Type, depth int) error {
-	typ, err := skipQualifiers(typ)
+func (gf *GoFormatter) writeType(typ types.Type, depth int) error {
+	typ, err := types.SkipQualifiers(typ)
 	if err != nil {
 		return err
 	}
@@ -118,39 +120,39 @@ func (gf *GoFormatter) writeType(typ Type, depth int) error {
 //
 //     struct { bar uint32; }
 //     uint32
-func (gf *GoFormatter) writeTypeLit(typ Type, depth int) error {
+func (gf *GoFormatter) writeTypeLit(typ types.Type, depth int) error {
 	depth++
 	if depth > maxTypeDepth {
 		return errNestedTooDeep
 	}
 
-	typ, err := skipQualifiers(typ)
+	typ, err := types.SkipQualifiers(typ)
 	if err != nil {
 		return err
 	}
 
 	switch v := typ.(type) {
-	case *Int:
+	case *types.Int:
 		gf.writeIntLit(v)
 
-	case *Enum:
+	case *types.Enum:
 		gf.w.WriteString("int32")
 
-	case *Typedef:
+	case *types.Typedef:
 		err = gf.writeType(v.Type, depth)
 
-	case *Array:
+	case *types.Array:
 		fmt.Fprintf(&gf.w, "[%d]", v.Nelems)
 		err = gf.writeType(v.Type, depth)
 
-	case *Struct:
+	case *types.Struct:
 		err = gf.writeStructLit(v.Size, v.Members, depth)
 
-	case *Union:
+	case *types.Union:
 		// Always choose the first member to represent the union in Go.
 		err = gf.writeStructLit(v.Size, v.Members[:1], depth)
 
-	case *Datasec:
+	case *types.Datasec:
 		err = gf.writeDatasecLit(v, depth)
 
 	default:
@@ -164,7 +166,7 @@ func (gf *GoFormatter) writeTypeLit(typ Type, depth int) error {
 	return nil
 }
 
-func (gf *GoFormatter) writeIntLit(i *Int) {
+func (gf *GoFormatter) writeIntLit(i *types.Int) {
 	// NB: Encoding.IsChar is ignored.
 	if i.Encoding.IsBool() && i.Size == 1 {
 		gf.w.WriteString("bool")
@@ -179,7 +181,7 @@ func (gf *GoFormatter) writeIntLit(i *Int) {
 	}
 }
 
-func (gf *GoFormatter) writeStructLit(size uint32, members []Member, depth int) error {
+func (gf *GoFormatter) writeStructLit(size uint32, members []types.Member, depth int) error {
 	gf.w.WriteString("struct { ")
 
 	prevOffset := uint32(0)
@@ -197,7 +199,7 @@ func (gf *GoFormatter) writeStructLit(size uint32, members []Member, depth int) 
 			gf.writePadding(n)
 		}
 
-		size, err := Sizeof(m.Type)
+		size, err := types.Sizeof(m.Type)
 		if err != nil {
 			return fmt.Errorf("field %d: %w", i, err)
 		}
@@ -213,7 +215,7 @@ func (gf *GoFormatter) writeStructLit(size uint32, members []Member, depth int) 
 	return nil
 }
 
-func (gf *GoFormatter) writeStructField(m Member, depth int) error {
+func (gf *GoFormatter) writeStructField(m types.Member, depth int) error {
 	if m.BitfieldSize > 0 {
 		return fmt.Errorf("bitfields are not supported")
 	}
@@ -225,7 +227,7 @@ func (gf *GoFormatter) writeStructField(m Member, depth int) error {
 		// Special case a nested anonymous union like
 		//     struct foo { union { int bar; int baz }; }
 		// by replacing the whole union with its first member.
-		union, ok := m.Type.(*Union)
+		union, ok := m.Type.(*types.Union)
 		if !ok {
 			return fmt.Errorf("anonymous fields are not supported")
 
@@ -241,7 +243,7 @@ func (gf *GoFormatter) writeStructField(m Member, depth int) error {
 		}
 
 		m := union.Members[0]
-		size, err := Sizeof(m.Type)
+		size, err := types.Sizeof(m.Type)
 		if err != nil {
 			return err
 		}
@@ -265,13 +267,13 @@ func (gf *GoFormatter) writeStructField(m Member, depth int) error {
 	return nil
 }
 
-func (gf *GoFormatter) writeDatasecLit(ds *Datasec, depth int) error {
+func (gf *GoFormatter) writeDatasecLit(ds *types.Datasec, depth int) error {
 	gf.w.WriteString("struct { ")
 
 	prevOffset := uint32(0)
 	for i, vsi := range ds.Vars {
-		v := vsi.Type.(*Var)
-		if v.Linkage != GlobalVar {
+		v := vsi.Type.(*types.Var)
+		if v.Linkage != types.GlobalVar {
 			// Ignore static, extern, etc. for now.
 			continue
 		}

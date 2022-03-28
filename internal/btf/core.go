@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/cilium/ebpf/asm"
+	"github.com/cilium/ebpf/btf/types"
 )
 
 // Code in this file is derived from libbpf, which is available under a BSD
@@ -207,12 +208,12 @@ func coreRelocate(local, target *Spec, relos CORERelos) (COREFixups, error) {
 		return nil, fmt.Errorf("can't relocate %s against %s", local.byteOrder, target.byteOrder)
 	}
 
-	var ids []TypeID
-	relosByID := make(map[TypeID]CORERelos)
+	var ids []types.TypeID
+	relosByID := make(map[types.TypeID]CORERelos)
 	result := make(COREFixups, len(relos))
 	for _, relo := range relos {
 		if relo.kind == reloTypeIDLocal {
-			// Filtering out reloTypeIDLocal here makes our lives a lot easier
+			// Filtering out relotypes.TypeIDLocal here makes our lives a lot easier
 			// down the line, since it doesn't have a target at all.
 			if len(relo.accessor) > 1 || relo.accessor[0] != 0 {
 				return nil, fmt.Errorf("%s: unexpected accessor %v", relo.kind, relo.accessor)
@@ -273,9 +274,9 @@ var errImpossibleRelocation = errors.New("impossible relocation")
 //
 // The best target is determined by scoring: the less poisoning we have to do
 // the better the target is.
-func coreCalculateFixups(byteOrder binary.ByteOrder, local Type, targets []Type, relos CORERelos) ([]COREFixup, error) {
+func coreCalculateFixups(byteOrder binary.ByteOrder, local types.Type, targets []types.Type, relos CORERelos) ([]COREFixup, error) {
 	localID := local.ID()
-	local, err := copyType(local, skipQualifiersAndTypedefs)
+	local, err := types.CopyType(local, types.SkipQualifiersAndTypedefs)
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +285,7 @@ func coreCalculateFixups(byteOrder binary.ByteOrder, local Type, targets []Type,
 	var bestFixups []COREFixup
 	for i := range targets {
 		targetID := targets[i].ID()
-		target, err := copyType(targets[i], skipQualifiersAndTypedefs)
+		target, err := types.CopyType(targets[i], types.SkipQualifiersAndTypedefs)
 		if err != nil {
 			return nil, err
 		}
@@ -337,7 +338,7 @@ func coreCalculateFixups(byteOrder binary.ByteOrder, local Type, targets []Type,
 
 // coreCalculateFixup calculates the fixup for a single local type, target type
 // and relocation.
-func coreCalculateFixup(byteOrder binary.ByteOrder, local Type, localID TypeID, target Type, targetID TypeID, relo CORERelocation) (COREFixup, error) {
+func coreCalculateFixup(byteOrder binary.ByteOrder, local types.Type, localID types.TypeID, target types.Type, targetID types.TypeID, relo CORERelocation) (COREFixup, error) {
 	fixup := func(local, target uint32, validateLocal bool) (COREFixup, error) {
 		return COREFixup{FixupKind{relo.kind, validateLocal}, local, target, false}, nil
 	}
@@ -371,12 +372,12 @@ func coreCalculateFixup(byteOrder binary.ByteOrder, local Type, localID TypeID, 
 			return fixup(uint32(localID), uint32(targetID), true)
 
 		case reloTypeSize:
-			localSize, err := Sizeof(local)
+			localSize, err := types.Sizeof(local)
 			if err != nil {
 				return zero, err
 			}
 
-			targetSize, err := Sizeof(target)
+			targetSize, err := types.Sizeof(target)
 			if err != nil {
 				return zero, err
 			}
@@ -403,12 +404,12 @@ func coreCalculateFixup(byteOrder binary.ByteOrder, local Type, localID TypeID, 
 
 	case reloFieldSigned:
 		switch local.(type) {
-		case *Enum:
+		case *types.Enum:
 			return fixup(1, 1, true)
-		case *Int:
+		case *types.Int:
 			return fixup(
-				uint32(local.(*Int).Encoding&Signed),
-				uint32(target.(*Int).Encoding&Signed),
+				uint32(local.(*types.Int).Encoding&types.Signed),
+				uint32(target.(*types.Int).Encoding&types.Signed),
 				true,
 			)
 		default:
@@ -416,7 +417,7 @@ func coreCalculateFixup(byteOrder binary.ByteOrder, local Type, localID TypeID, 
 		}
 
 	case reloFieldByteOffset, reloFieldByteSize, reloFieldExists, reloFieldLShiftU64, reloFieldRShiftU64:
-		if _, ok := target.(*Fwd); ok {
+		if _, ok := target.(*types.Fwd); ok {
 			// We can't relocate fields using a forward declaration, so
 			// skip it. If a non-forward declaration is present in the BTF
 			// we'll find it in one of the other iterations.
@@ -440,12 +441,12 @@ func coreCalculateFixup(byteOrder binary.ByteOrder, local Type, localID TypeID, 
 			return fixup(localField.offset, targetField.offset, validateLocal)
 
 		case reloFieldByteSize:
-			localSize, err := Sizeof(localField.Type)
+			localSize, err := types.Sizeof(localField.Type)
 			if err != nil {
 				return zero, err
 			}
 
-			targetSize, err := Sizeof(targetField.Type)
+			targetSize, err := types.Sizeof(targetField.Type)
 			if err != nil {
 				return zero, err
 			}
@@ -461,7 +462,7 @@ func coreCalculateFixup(byteOrder binary.ByteOrder, local Type, localID TypeID, 
 
 				target = 64 - targetField.bitfieldOffset - targetSize
 			} else {
-				loadWidth, err := Sizeof(targetField.Type)
+				loadWidth, err := types.Sizeof(targetField.Type)
 				if err != nil {
 					return zero, err
 				}
@@ -541,8 +542,8 @@ func (ca coreAccessor) String() string {
 	return strings.Join(strs, ":")
 }
 
-func (ca coreAccessor) enumValue(t Type) (*EnumValue, error) {
-	e, ok := t.(*Enum)
+func (ca coreAccessor) enumValue(t types.Type) (*types.EnumValue, error) {
+	e, ok := t.(*types.Enum)
 	if !ok {
 		return nil, fmt.Errorf("not an enum: %s", t)
 	}
@@ -566,7 +567,7 @@ func (ca coreAccessor) enumValue(t Type) (*EnumValue, error) {
 //     | offset * 8 | bitfieldOffset | bitfieldSize | ... |
 //                  \- start of field       end of field -/
 type coreField struct {
-	Type Type
+	Type types.Type
 
 	// The position of the field from the start of the composite type in bytes.
 	offset uint32
@@ -581,7 +582,7 @@ type coreField struct {
 }
 
 func (cf *coreField) adjustOffsetToNthElement(n int) error {
-	size, err := Sizeof(cf.Type)
+	size, err := types.Sizeof(cf.Type)
 	if err != nil {
 		return err
 	}
@@ -591,7 +592,7 @@ func (cf *coreField) adjustOffsetToNthElement(n int) error {
 }
 
 func (cf *coreField) adjustOffsetBits(offset uint32) error {
-	align, err := alignof(cf.Type)
+	align, err := types.Alignof(cf.Type)
 	if err != nil {
 		return err
 	}
@@ -621,19 +622,28 @@ func (cf *coreField) sizeBits() (uint32, error) {
 	// Someone is trying to access a non-bitfield via a bit shift relocation.
 	// This happens when a field changes from a bitfield to a regular field
 	// between kernel versions. Synthesise the size to make the shifts work.
-	size, err := Sizeof(cf.Type)
+	size, err := types.Sizeof(cf.Type)
 	if err != nil {
 		return 0, nil
 	}
 	return uint32(size) * 8, nil
 }
 
+type composite interface {
+	GetMembers() []types.Member
+}
+
+var (
+	_ composite = (*types.Struct)(nil)
+	_ composite = (*types.Union)(nil)
+)
+
 // coreFindField descends into the local type using the accessor and tries to
 // find an equivalent field in target at each step.
 //
 // Returns the field and the offset of the field from the start of
 // target in bits.
-func coreFindField(localT Type, localAcc coreAccessor, targetT Type) (coreField, coreField, error) {
+func coreFindField(localT types.Type, localAcc coreAccessor, targetT types.Type) (coreField, coreField, error) {
 	local := coreField{Type: localT}
 	target := coreField{Type: targetT}
 
@@ -657,7 +667,7 @@ func coreFindField(localT Type, localAcc coreAccessor, targetT Type) (coreField,
 		case composite:
 			// For composite types acc is used to find the field in the local type,
 			// and then we try to find a field in target with the same name.
-			localMembers := localType.members()
+			localMembers := localType.GetMembers()
 			if acc >= len(localMembers) {
 				return coreField{}, coreField{}, fmt.Errorf("invalid accessor %d for %s", acc, localType)
 			}
@@ -722,9 +732,9 @@ func coreFindField(localT Type, localAcc coreAccessor, targetT Type) (coreField,
 				return coreField{}, coreField{}, err
 			}
 
-		case *Array:
+		case *types.Array:
 			// For arrays, acc is the index in the target.
-			targetType, ok := target.Type.(*Array)
+			targetType, ok := target.Type.(*types.Array)
 			if !ok {
 				return coreField{}, coreField{}, fmt.Errorf("target not array: %w", errImpossibleRelocation)
 			}
@@ -777,9 +787,9 @@ func coreFindField(localT Type, localAcc coreAccessor, targetT Type) (coreField,
 
 // coreFindMember finds a member in a composite type while handling anonymous
 // structs and unions.
-func coreFindMember(typ composite, name string) (Member, bool, error) {
+func coreFindMember(typ composite, name string) (types.Member, bool, error) {
 	if name == "" {
-		return Member{}, false, errors.New("can't search for anonymous member")
+		return types.Member{}, false, errors.New("can't search for anonymous member")
 	}
 
 	type offsetTarget struct {
@@ -800,11 +810,11 @@ func coreFindMember(typ composite, name string) (Member, bool, error) {
 		if len(visited) >= maxTypeDepth {
 			// This check is different than libbpf, which restricts the entire
 			// path to BPF_CORE_SPEC_MAX_LEN items.
-			return Member{}, false, fmt.Errorf("type is nested too deep")
+			return types.Member{}, false, fmt.Errorf("type is nested too deep")
 		}
 		visited[target] = true
 
-		members := target.members()
+		members := target.GetMembers()
 		for j, member := range members {
 			if member.Name == name {
 				// NB: This is safe because member is a copy.
@@ -820,24 +830,24 @@ func coreFindMember(typ composite, name string) (Member, bool, error) {
 
 			comp, ok := member.Type.(composite)
 			if !ok {
-				return Member{}, false, fmt.Errorf("anonymous non-composite type %T not allowed", member.Type)
+				return types.Member{}, false, fmt.Errorf("anonymous non-composite type %T not allowed", member.Type)
 			}
 
 			targets = append(targets, offsetTarget{comp, target.offset + member.OffsetBits})
 		}
 	}
 
-	return Member{}, false, fmt.Errorf("no matching member: %w", errImpossibleRelocation)
+	return types.Member{}, false, fmt.Errorf("no matching member: %w", errImpossibleRelocation)
 }
 
 // coreFindEnumValue follows localAcc to find the equivalent enum value in target.
-func coreFindEnumValue(local Type, localAcc coreAccessor, target Type) (localValue, targetValue *EnumValue, _ error) {
+func coreFindEnumValue(local types.Type, localAcc coreAccessor, target types.Type) (localValue, targetValue *types.EnumValue, _ error) {
 	localValue, err := localAcc.enumValue(local)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	targetEnum, ok := target.(*Enum)
+	targetEnum, ok := target.(*types.Enum)
 	if !ok {
 		return nil, nil, errImpossibleRelocation
 	}
@@ -877,14 +887,14 @@ func coreFindEnumValue(local Type, localAcc coreAccessor, target Type) (localVal
  *
  * Returns errImpossibleRelocation if types are not compatible.
  */
-func coreAreTypesCompatible(localType Type, targetType Type) error {
+func coreAreTypesCompatible(localType types.Type, targetType types.Type) error {
 	var (
-		localTs, targetTs typeDeque
+		localTs, targetTs types.TypeDeque
 		l, t              = &localType, &targetType
 		depth             = 0
 	)
 
-	for ; l != nil && t != nil; l, t = localTs.shift(), targetTs.shift() {
+	for ; l != nil && t != nil; l, t = localTs.Shift(), targetTs.Shift() {
 		if depth >= maxTypeDepth {
 			return errors.New("types are nested too deep")
 		}
@@ -897,29 +907,29 @@ func coreAreTypesCompatible(localType Type, targetType Type) error {
 		}
 
 		switch lv := (localType).(type) {
-		case *Void, *Struct, *Union, *Enum, *Fwd:
+		case *types.Void, *types.Struct, *types.Union, *types.Enum, *types.Fwd:
 			// Nothing to do here
 
-		case *Int:
-			tv := targetType.(*Int)
-			if lv.isBitfield() || tv.isBitfield() {
+		case *types.Int:
+			tv := targetType.(*types.Int)
+			if lv.IsBitfield() || tv.IsBitfield() {
 				return fmt.Errorf("bitfield: %w", errImpossibleRelocation)
 			}
 
-		case *Pointer, *Array:
+		case *types.Pointer, *types.Array:
 			depth++
-			localType.walk(&localTs)
-			targetType.walk(&targetTs)
+			localType.Walk(&localTs)
+			targetType.Walk(&targetTs)
 
-		case *FuncProto:
-			tv := targetType.(*FuncProto)
+		case *types.FuncProto:
+			tv := targetType.(*types.FuncProto)
 			if len(lv.Params) != len(tv.Params) {
 				return fmt.Errorf("function param mismatch: %w", errImpossibleRelocation)
 			}
 
 			depth++
-			localType.walk(&localTs)
-			targetType.walk(&targetTs)
+			localType.Walk(&localTs)
+			targetType.Walk(&targetTs)
 
 		default:
 			return fmt.Errorf("unsupported type %T", localType)
@@ -962,7 +972,7 @@ func coreAreTypesCompatible(localType Type, targetType Type) error {
  *
  * Returns errImpossibleRelocation if the members are not compatible.
  */
-func coreAreMembersCompatible(localType Type, targetType Type) error {
+func coreAreMembersCompatible(localType types.Type, targetType types.Type) error {
 	doNamesMatch := func(a, b string) error {
 		if a == "" || b == "" {
 			// allow anonymous and named type to match
@@ -987,20 +997,20 @@ func coreAreMembersCompatible(localType Type, targetType Type) error {
 	}
 
 	switch lv := localType.(type) {
-	case *Array, *Pointer, *Float:
+	case *types.Array, *types.Pointer, *types.Float:
 		return nil
 
-	case *Enum:
-		tv := targetType.(*Enum)
+	case *types.Enum:
+		tv := targetType.(*types.Enum)
 		return doNamesMatch(lv.Name, tv.Name)
 
-	case *Fwd:
-		tv := targetType.(*Fwd)
+	case *types.Fwd:
+		tv := targetType.(*types.Fwd)
 		return doNamesMatch(lv.Name, tv.Name)
 
-	case *Int:
-		tv := targetType.(*Int)
-		if lv.isBitfield() || tv.isBitfield() {
+	case *types.Int:
+		tv := targetType.(*types.Int)
+		if lv.IsBitfield() || tv.IsBitfield() {
 			return fmt.Errorf("bitfield: %w", errImpossibleRelocation)
 		}
 		return nil
@@ -1008,32 +1018,4 @@ func coreAreMembersCompatible(localType Type, targetType Type) error {
 	default:
 		return fmt.Errorf("type %s: %w", localType, ErrNotSupported)
 	}
-}
-
-func skipQualifiersAndTypedefs(typ Type) (Type, error) {
-	result := typ
-	for depth := 0; depth <= maxTypeDepth; depth++ {
-		switch v := (result).(type) {
-		case qualifier:
-			result = v.qualify()
-		case *Typedef:
-			result = v.Type
-		default:
-			return result, nil
-		}
-	}
-	return nil, errors.New("exceeded type depth")
-}
-
-func skipQualifiers(typ Type) (Type, error) {
-	result := typ
-	for depth := 0; depth <= maxTypeDepth; depth++ {
-		switch v := (result).(type) {
-		case qualifier:
-			result = v.qualify()
-		default:
-			return result, nil
-		}
-	}
-	return nil, errors.New("exceeded type depth")
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cilium/ebpf/asm"
+	"github.com/cilium/ebpf/btf/types"
 	"github.com/cilium/ebpf/internal"
 	"github.com/cilium/ebpf/internal/btf"
 	"github.com/cilium/ebpf/internal/sys"
@@ -808,7 +809,7 @@ func (p *Program) BindMap(m *Map) error {
 	return sys.ProgBindMap(attr)
 }
 
-func resolveBTFType(spec *btf.Spec, name string, progType ProgramType, attachType AttachType) (btf.Type, error) {
+func resolveBTFType(spec *btf.Spec, name string, progType ProgramType, attachType AttachType) (types.Type, error) {
 	type match struct {
 		p ProgramType
 		a AttachType
@@ -847,7 +848,7 @@ func resolveBTFType(spec *btf.Spec, name string, progType ProgramType, attachTyp
 	}
 
 	var (
-		target btf.Type
+		target types.Type
 		err    error
 	)
 	if spec == nil {
@@ -858,11 +859,11 @@ func resolveBTFType(spec *btf.Spec, name string, progType ProgramType, attachTyp
 	}
 
 	if isBTFTypeFunc {
-		var targetFunc *btf.Func
+		var targetFunc *types.Func
 		err = spec.TypeByName(typeName, &targetFunc)
 		target = targetFunc
 	} else {
-		var targetTypedef *btf.Typedef
+		var targetTypedef *types.Typedef
 		err = spec.TypeByName(typeName, &targetTypedef)
 		target = targetTypedef
 	}

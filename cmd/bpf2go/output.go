@@ -12,6 +12,7 @@ import (
 	"text/template"
 
 	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/btf/types"
 	"github.com/cilium/ebpf/internal"
 	"github.com/cilium/ebpf/internal/btf"
 )
@@ -260,7 +261,7 @@ func output(args outputArgs) error {
 		return err
 	}
 
-	typeNames := make(map[btf.Type]string)
+	typeNames := make(map[types.Type]string)
 	for _, cType := range cTypes {
 		typeNames[cType] = args.ident + internal.Identifier(cType.TypeName())
 	}
@@ -268,13 +269,13 @@ func output(args outputArgs) error {
 	// Collect map key and value types, unless we've been asked not to.
 	if !args.skipGlobalTypes {
 		for _, typ := range collectMapTypes(spec.Maps) {
-			switch btf.UnderlyingType(typ).(type) {
-			case *btf.Datasec:
+			switch types.UnderlyingType(typ).(type) {
+			case *types.Datasec:
 				// Avoid emitting .rodata, .bss, etc. for now. We might want to
 				// name these types differently, etc.
 				continue
 
-			case *btf.Int:
+			case *types.Int:
 				// Don't emit primitive types by default.
 				continue
 			}
@@ -284,8 +285,8 @@ func output(args outputArgs) error {
 	}
 
 	// Ensure we don't have conflicting names and generate a sorted list of
-	// named types so that the output is stable.
-	types, err := sortTypes(typeNames)
+	// named typs so that the output is stable.
+	typs, err := sortTypes(typeNames)
 	if err != nil {
 		return err
 	}
@@ -303,8 +304,8 @@ func output(args outputArgs) error {
 		Name      templateName
 		Maps      map[string]string
 		Programs  map[string]string
-		Types     []btf.Type
-		TypeNames map[btf.Type]string
+		Types     types.Types
+		TypeNames map[types.Type]string
 		File      string
 	}{
 		gf,
@@ -314,7 +315,7 @@ func output(args outputArgs) error {
 		templateName(args.ident),
 		maps,
 		programs,
-		types,
+		typs,
 		typeNames,
 		filepath.Base(args.obj),
 	}
@@ -327,10 +328,10 @@ func output(args outputArgs) error {
 	return internal.WriteFormatted(buf.Bytes(), args.out)
 }
 
-func collectCTypes(types *btf.Spec, names []string) ([]btf.Type, error) {
-	var result []btf.Type
+func collectCTypes(typs *btf.Spec, names []string) ([]types.Type, error) {
+	var result []types.Type
 	for _, cType := range names {
-		typ, err := types.AnyTypeByName(cType)
+		typ, err := typs.AnyTypeByName(cType)
 		if err != nil {
 			return nil, err
 		}
@@ -340,8 +341,8 @@ func collectCTypes(types *btf.Spec, names []string) ([]btf.Type, error) {
 }
 
 // collectMapTypes returns a list of all types used as map keys or values.
-func collectMapTypes(maps map[string]*ebpf.MapSpec) []btf.Type {
-	var result []btf.Type
+func collectMapTypes(maps map[string]*ebpf.MapSpec) []types.Type {
+	var result []types.Type
 	for _, m := range maps {
 		if m.BTF == nil {
 			continue
@@ -361,13 +362,13 @@ func collectMapTypes(maps map[string]*ebpf.MapSpec) []btf.Type {
 // sortTypes returns a list of types sorted by their (generated) Go type name.
 //
 // Duplicate Go type names are rejected.
-func sortTypes(typeNames map[btf.Type]string) ([]btf.Type, error) {
-	var types []btf.Type
+func sortTypes(typeNames map[types.Type]string) ([]types.Type, error) {
+	var typs []types.Type
 	var names []string
 	for typ, name := range typeNames {
 		i := sort.SearchStrings(names, name)
 		if i >= len(names) {
-			types = append(types, typ)
+			typs = append(typs, typ)
 			names = append(names, name)
 			continue
 		}
@@ -376,11 +377,11 @@ func sortTypes(typeNames map[btf.Type]string) ([]btf.Type, error) {
 			return nil, fmt.Errorf("type name %q is used multiple times", name)
 		}
 
-		types = append(types[:i], append([]btf.Type{typ}, types[i:]...)...)
+		typs = append(typs[:i], append([]types.Type{typ}, typs[i:]...)...)
 		names = append(names[:i], append([]string{name}, names[i:]...)...)
 	}
 
-	return types, nil
+	return typs, nil
 }
 
 func tag(str string) string {

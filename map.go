@@ -12,6 +12,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/cilium/ebpf/btf/types"
 	"github.com/cilium/ebpf/internal"
 	"github.com/cilium/ebpf/internal/btf"
 	"github.com/cilium/ebpf/internal/sys"
@@ -1269,7 +1270,7 @@ func marshalMap(m *Map, length int) ([]byte, error) {
 	return buf, nil
 }
 
-func patchValue(value []byte, typ btf.Type, replacements map[string]interface{}) error {
+func patchValue(value []byte, typ types.Type, replacements map[string]interface{}) error {
 	replaced := make(map[string]bool)
 	replace := func(name string, offset, size int, replacement interface{}) error {
 		if offset+size > len(value) {
@@ -1287,9 +1288,9 @@ func patchValue(value []byte, typ btf.Type, replacements map[string]interface{})
 	}
 
 	switch parent := typ.(type) {
-	case *btf.Datasec:
+	case *types.Datasec:
 		for _, secinfo := range parent.Vars {
-			name := string(secinfo.Type.(*btf.Var).Name)
+			name := string(secinfo.Type.(*types.Var).Name)
 			replacement, ok := replacements[name]
 			if !ok {
 				continue

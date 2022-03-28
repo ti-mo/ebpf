@@ -6,100 +6,102 @@ import (
 	"go/format"
 	"strings"
 	"testing"
+
+	"github.com/cilium/ebpf/btf/types"
 )
 
 func TestGoTypeDeclaration(t *testing.T) {
 	tests := []struct {
-		typ    Type
+		typ    types.Type
 		output string
 	}{
-		{&Int{Size: 1}, "type t uint8"},
-		{&Int{Size: 1, Encoding: Bool}, "type t bool"},
-		{&Int{Size: 2, Encoding: Bool}, "type t uint16"},
-		{&Int{Size: 1, Encoding: Char}, "type t uint8"},
-		{&Int{Size: 1, Encoding: Char | Signed}, "type t int8"},
-		{&Int{Size: 2, Encoding: Char}, "type t uint16"},
-		{&Int{Size: 2, Encoding: Signed}, "type t int16"},
-		{&Int{Size: 4, Encoding: Signed}, "type t int32"},
-		{&Int{Size: 8}, "type t uint64"},
-		{&Typedef{Name: "frob", Type: &Int{Size: 8}}, "type t uint64"},
-		{&Int{Size: 16}, "type t uint128"},
-		{&Enum{Values: []EnumValue{{"FOO", 32}}}, "type t int32; const ( tFOO t = 32; )"},
-		{&Array{Nelems: 2, Type: &Int{Size: 1}}, "type t [2]uint8"},
+		{&types.Int{Size: 1}, "type t uint8"},
+		{&types.Int{Size: 1, Encoding: types.Bool}, "type t bool"},
+		{&types.Int{Size: 2, Encoding: types.Bool}, "type t uint16"},
+		{&types.Int{Size: 1, Encoding: types.Char}, "type t uint8"},
+		{&types.Int{Size: 1, Encoding: types.Char | types.Signed}, "type t int8"},
+		{&types.Int{Size: 2, Encoding: types.Char}, "type t uint16"},
+		{&types.Int{Size: 2, Encoding: types.Signed}, "type t int16"},
+		{&types.Int{Size: 4, Encoding: types.Signed}, "type t int32"},
+		{&types.Int{Size: 8}, "type t uint64"},
+		{&types.Typedef{Name: "frob", Type: &types.Int{Size: 8}}, "type t uint64"},
+		{&types.Int{Size: 16}, "type t uint128"},
+		{&types.Enum{Values: []types.EnumValue{{"FOO", 32}}}, "type t int32; const ( tFOO t = 32; )"},
+		{&types.Array{Nelems: 2, Type: &types.Int{Size: 1}}, "type t [2]uint8"},
 		{
-			&Union{
+			&types.Union{
 				Size: 8,
-				Members: []Member{
-					{Name: "a", Type: &Int{Size: 4}},
-					{Name: "b", Type: &Int{Size: 8}},
+				Members: []types.Member{
+					{Name: "a", Type: &types.Int{Size: 4}},
+					{Name: "b", Type: &types.Int{Size: 8}},
 				},
 			},
 			"type t struct { a uint32; _ [4]byte; }",
 		},
 		{
-			&Struct{
+			&types.Struct{
 				Name: "field padding",
 				Size: 16,
-				Members: []Member{
-					{Name: "frob", Type: &Int{Size: 4}, OffsetBits: 0},
-					{Name: "foo", Type: &Int{Size: 8}, OffsetBits: 8 * 8},
+				Members: []types.Member{
+					{Name: "frob", Type: &types.Int{Size: 4}, OffsetBits: 0},
+					{Name: "foo", Type: &types.Int{Size: 8}, OffsetBits: 8 * 8},
 				},
 			},
 			"type t struct { frob uint32; _ [4]byte; foo uint64; }",
 		},
 		{
-			&Struct{
+			&types.Struct{
 				Name: "end padding",
 				Size: 16,
-				Members: []Member{
-					{Name: "foo", Type: &Int{Size: 8}, OffsetBits: 0},
-					{Name: "frob", Type: &Int{Size: 4}, OffsetBits: 8 * 8},
+				Members: []types.Member{
+					{Name: "foo", Type: &types.Int{Size: 8}, OffsetBits: 0},
+					{Name: "frob", Type: &types.Int{Size: 4}, OffsetBits: 8 * 8},
 				},
 			},
 			"type t struct { foo uint64; frob uint32; _ [4]byte; }",
 		},
 		{
-			&Struct{
+			&types.Struct{
 				Name: "bitfield",
 				Size: 8,
-				Members: []Member{
-					{Name: "foo", Type: &Int{Size: 4}, OffsetBits: 0, BitfieldSize: 1},
-					{Name: "frob", Type: &Int{Size: 4}, OffsetBits: 4 * 8},
+				Members: []types.Member{
+					{Name: "foo", Type: &types.Int{Size: 4}, OffsetBits: 0, BitfieldSize: 1},
+					{Name: "frob", Type: &types.Int{Size: 4}, OffsetBits: 4 * 8},
 				},
 			},
 			"type t struct { _ [4]byte /* unsupported bitfield */; frob uint32; }",
 		},
 		{
-			&Struct{
+			&types.Struct{
 				Name: "nested",
 				Size: 8,
-				Members: []Member{
+				Members: []types.Member{
 					{
 						Name: "foo",
-						Type: &Struct{
+						Type: &types.Struct{
 							Size: 4,
-							Members: []Member{
-								{Name: "bar", Type: &Int{Size: 4}, OffsetBits: 0},
+							Members: []types.Member{
+								{Name: "bar", Type: &types.Int{Size: 4}, OffsetBits: 0},
 							},
 						},
 					},
-					{Name: "frob", Type: &Int{Size: 4}, OffsetBits: 4 * 8},
+					{Name: "frob", Type: &types.Int{Size: 4}, OffsetBits: 4 * 8},
 				},
 			},
 			"type t struct { foo struct { bar uint32; }; frob uint32; }",
 		},
 		{
-			&Struct{
+			&types.Struct{
 				Name: "nested anon union",
 				Size: 8,
-				Members: []Member{
+				Members: []types.Member{
 					{
 						Name: "",
-						Type: &Union{
+						Type: &types.Union{
 							Size: 4,
-							Members: []Member{
-								{Name: "foo", Type: &Int{Size: 4}, OffsetBits: 0},
-								{Name: "bar", Type: &Int{Size: 4}, OffsetBits: 0},
+							Members: []types.Member{
+								{Name: "foo", Type: &types.Int{Size: 4}, OffsetBits: 0},
+								{Name: "bar", Type: &types.Int{Size: 4}, OffsetBits: 0},
 							},
 						},
 					},
@@ -108,12 +110,12 @@ func TestGoTypeDeclaration(t *testing.T) {
 			"type t struct { foo uint32; _ [4]byte; }",
 		},
 		{
-			&Datasec{
+			&types.Datasec{
 				Size: 16,
-				Vars: []VarSecinfo{
-					{&Var{Name: "s", Type: &Int{Size: 2}, Linkage: StaticVar}, 0, 2},
-					{&Var{Name: "g", Type: &Int{Size: 4}, Linkage: GlobalVar}, 4, 4},
-					{&Var{Name: "e", Type: &Int{Size: 8}, Linkage: ExternVar}, 8, 8},
+				Vars: []types.VarSecinfo{
+					{&types.Var{Name: "s", Type: &types.Int{Size: 2}, Linkage: types.StaticVar}, 0, 2},
+					{&types.Var{Name: "g", Type: &types.Int{Size: 4}, Linkage: types.GlobalVar}, 4, 4},
+					{&types.Var{Name: "e", Type: &types.Int{Size: 8}, Linkage: types.ExternVar}, 8, 8},
 				},
 			},
 			"type t struct { _ [4]byte; g uint32; _ [8]byte; }",
@@ -131,41 +133,41 @@ func TestGoTypeDeclaration(t *testing.T) {
 }
 
 func TestGoTypeDeclarationNamed(t *testing.T) {
-	e1 := &Enum{Name: "e1"}
-	s1 := &Struct{
+	e1 := &types.Enum{Name: "e1"}
+	s1 := &types.Struct{
 		Name: "s1",
 		Size: 4,
-		Members: []Member{
+		Members: []types.Member{
 			{Name: "frob", Type: e1},
 		},
 	}
-	s2 := &Struct{
+	s2 := &types.Struct{
 		Name: "s2",
 		Size: 4,
-		Members: []Member{
+		Members: []types.Member{
 			{Name: "frood", Type: s1},
 		},
 	}
-	td := &Typedef{Name: "td", Type: e1}
-	arr := &Array{Nelems: 1, Type: td}
+	td := &types.Typedef{Name: "td", Type: e1}
+	arr := &types.Array{Nelems: 1, Type: td}
 
 	tests := []struct {
-		typ    Type
-		named  []Type
+		typ    types.Type
+		named  []types.Type
 		output string
 	}{
-		{e1, []Type{e1}, "type t int32"},
-		{s1, []Type{e1, s1}, "type t struct { frob E1; }"},
-		{s2, []Type{e1}, "type t struct { frood struct { frob E1; }; }"},
-		{s2, []Type{e1, s1}, "type t struct { frood S1; }"},
+		{e1, []types.Type{e1}, "type t int32"},
+		{s1, []types.Type{e1, s1}, "type t struct { frob E1; }"},
+		{s2, []types.Type{e1}, "type t struct { frood struct { frob E1; }; }"},
+		{s2, []types.Type{e1, s1}, "type t struct { frood S1; }"},
 		{td, nil, "type t int32"},
-		{td, []Type{td}, "type t int32"},
-		{arr, []Type{td}, "type t [1]TD"},
+		{td, []types.Type{td}, "type t int32"},
+		{arr, []types.Type{td}, "type t [1]TD"},
 	}
 
 	for _, test := range tests {
 		t.Run(fmt.Sprint(test.typ), func(t *testing.T) {
-			names := make(map[Type]string)
+			names := make(map[types.Type]string)
 			for _, t := range test.named {
 				names[t] = strings.ToUpper(t.TypeName())
 			}
@@ -179,15 +181,15 @@ func TestGoTypeDeclarationNamed(t *testing.T) {
 }
 
 func TestGoTypeDeclarationQualifiers(t *testing.T) {
-	i := &Int{Size: 4}
+	i := &types.Int{Size: 4}
 	want := mustGoTypeDeclaration(t, i, nil, nil)
 
 	tests := []struct {
-		typ Type
+		typ types.Type
 	}{
-		{&Volatile{Type: i}},
-		{&Const{Type: i}},
-		{&Restrict{Type: i}},
+		{&types.Volatile{Type: i}},
+		{&types.Const{Type: i}},
+		{&types.Restrict{Type: i}},
 	}
 
 	for _, test := range tests {
@@ -201,8 +203,8 @@ func TestGoTypeDeclarationQualifiers(t *testing.T) {
 }
 
 func TestGoTypeDeclarationCycle(t *testing.T) {
-	s := &Struct{Name: "cycle"}
-	s.Members = []Member{{Name: "f", Type: s}}
+	s := &types.Struct{Name: "cycle"}
+	s.Members = []types.Member{{Name: "f", Type: s}}
 
 	var gf GoFormatter
 	_, err := gf.TypeDeclaration("t", s)
@@ -211,7 +213,7 @@ func TestGoTypeDeclarationCycle(t *testing.T) {
 	}
 }
 
-func mustGoTypeDeclaration(tb testing.TB, typ Type, names map[Type]string, id func(string) string) string {
+func mustGoTypeDeclaration(tb testing.TB, typ types.Type, names map[types.Type]string, id func(string) string) string {
 	tb.Helper()
 
 	gf := GoFormatter{

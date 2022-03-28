@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/btf/types"
 	"github.com/cilium/ebpf/internal/btf"
 	"github.com/cilium/ebpf/internal/sys"
 )
@@ -38,7 +39,7 @@ func AttachFreplace(targetProg *ebpf.Program, name string, prog *ebpf.Program) (
 
 	var (
 		target int
-		typeID btf.TypeID
+		typeID types.TypeID
 	)
 	if targetProg != nil {
 		info, err := targetProg.Info()
@@ -55,7 +56,7 @@ func AttachFreplace(targetProg *ebpf.Program, name string, prog *ebpf.Program) (
 		}
 		defer btfHandle.Close()
 
-		var function *btf.Func
+		var function *types.Func
 		if err := btfHandle.Spec().TypeByName(name, &function); err != nil {
 			return nil, err
 		}

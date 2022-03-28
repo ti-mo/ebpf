@@ -13,6 +13,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/cilium/ebpf/btf/types"
 	"github.com/cilium/ebpf/internal"
 	"github.com/cilium/ebpf/internal/sys"
 	"github.com/cilium/ebpf/internal/unix"
@@ -37,11 +38,11 @@ type Spec struct {
 	strings  stringTable
 
 	// Inflated Types.
-	types []Type
+	types types.Types
 
 	// Types indexed by essential name.
 	// Includes all struct flavors and types with the same name.
-	namedTypes map[essentialName][]Type
+	namedTypes map[essentialName]types.Types
 
 	// Data from .BTF.ext. indexed by function name.
 	funcInfos map[string]FuncInfo
@@ -200,14 +201,14 @@ func (spec *Spec) splitExtInfos(info *extInfo) error {
 
 	for secName, secFuncInfos := range info.funcInfos {
 		// Collect functions from each section and organize them by name.
-		var funcs []*Func
+		var funcs []*types.Func
 		for _, fi := range secFuncInfos {
 			typ, err := spec.TypeByID(fi.TypeID)
 			if err != nil {
 				return err
 			}
 
-			fn, ok := typ.(*Func)
+			fn, ok := typ.(*types.Func)
 			if !ok {
 				return fmt.Errorf("type ID %d is a %T, but expected a Func", fi.TypeID, typ)
 			}
@@ -228,7 +229,7 @@ func (spec *Spec) splitExtInfos(info *extInfo) error {
 		// Consider an ELF section that contains 3 functions (a, b, c)
 		// at offsets 0, 10 and 15 respectively. Offset 5 will return function a,
 		// offset 12 will return b, offset >= 15 will return c, etc.
-		funcForInstruction := func(offset uint32) (fn *Func, fnOffset uint32) {
+		funcForInstruction := func(offset uint32) (fn *types.Func, fnOffset uint32) {
 			for i, fi := range secFuncInfos {
 				if fi.InsnOff > offset {
 					break
@@ -525,10 +526,10 @@ func fixupDatasec(rawTypes []rawType, rawStrings stringTable, sectionSizes map[s
 
 // Copy creates a copy of Spec.
 func (s *Spec) Copy() *Spec {
-	types, _ := copyTypes(s.types, nil)
+	typs, _ := s.types.Copy(nil)
 
-	namedTypes := make(map[essentialName][]Type)
-	for _, typ := range types {
+	namedTypes := make(map[essentialName]types.Types)
+	for _, typ := range typs {
 		if name := typ.TypeName(); name != "" {
 			en := newEssentialName(name)
 			namedTypes[en] = append(namedTypes[en], typ)
@@ -539,7 +540,7 @@ func (s *Spec) Copy() *Spec {
 	return &Spec{
 		s.rawTypes,
 		s.strings,
-		types,
+		typs,
 		namedTypes,
 		s.funcInfos,
 		s.lineInfos,
@@ -568,7 +569,7 @@ func (s *Spec) marshal(opts marshalOpts) ([]byte, error) {
 	for _, raw := range s.rawTypes {
 		switch {
 		case opts.StripFuncLinkage && raw.Kind() == kindFunc:
-			raw.SetLinkage(StaticFunc)
+			raw.SetLinkage(types.StaticFunc)
 		}
 
 		if err := raw.Marshal(&buf, opts.ByteOrder); err != nil {
@@ -636,7 +637,7 @@ func (s *Spec) Program(name string) (*Program, error) {
 //
 // Returns an error wrapping ErrNotFound if a Type with the given ID
 // does not exist in the Spec.
-func (s *Spec) TypeByID(id TypeID) (Type, error) {
+func (s *Spec) TypeByID(id types.TypeID) (types.Type, error) {
 	if int(id) > len(s.types) {
 		return nil, fmt.Errorf("type ID %d: %w", id, ErrNotFound)
 	}
@@ -650,15 +651,15 @@ func (s *Spec) TypeByID(id TypeID) (Type, error) {
 // data structure.
 //
 // Returns an error wrapping ErrNotFound if no matching Type exists in the Spec.
-func (s *Spec) AnyTypesByName(name string) ([]Type, error) {
-	types := s.namedTypes[newEssentialName(name)]
-	if len(types) == 0 {
+func (s *Spec) AnyTypesByName(name string) ([]types.Type, error) {
+	btfTypes := s.namedTypes[newEssentialName(name)]
+	if len(btfTypes) == 0 {
 		return nil, fmt.Errorf("type name %s: %w", name, ErrNotFound)
 	}
 
 	// Return a copy to prevent changes to namedTypes.
-	result := make([]Type, 0, len(types))
-	for _, t := range types {
+	result := make([]types.Type, 0, len(btfTypes))
+	for _, t := range btfTypes {
 		// Match against the full name, not just the essential one
 		// in case the type being looked up is a struct flavor.
 		if t.TypeName() == name {
@@ -671,7 +672,7 @@ func (s *Spec) AnyTypesByName(name string) ([]Type, error) {
 // AnyTypeByName returns a Type with the given name.
 //
 // Returns an error if multiple types of that name exist.
-func (s *Spec) AnyTypeByName(name string) (Type, error) {
+func (s *Spec) AnyTypeByName(name string) (types.Type, error) {
 	types, err := s.AnyTypesByName(name)
 	if err != nil {
 		return nil, err
@@ -706,17 +707,17 @@ func (s *Spec) TypeByName(name string, typ interface{}) error {
 	}
 
 	wanted := typPtr.Type()
-	if !wanted.AssignableTo(reflect.TypeOf((*Type)(nil)).Elem()) {
+	if !wanted.AssignableTo(reflect.TypeOf((*types.Type)(nil)).Elem()) {
 		return fmt.Errorf("%T does not satisfy Type interface", typ)
 	}
 
-	types, err := s.AnyTypesByName(name)
+	btfTypes, err := s.AnyTypesByName(name)
 	if err != nil {
 		return err
 	}
 
-	var candidate Type
-	for _, typ := range types {
+	var candidate types.Type
+	for _, typ := range btfTypes {
 		if reflect.TypeOf(typ) != wanted {
 			continue
 		}
@@ -827,7 +828,7 @@ func (h *Handle) FD() int {
 // Map is the BTF for a map.
 type Map struct {
 	Spec       *Spec
-	Key, Value Type
+	Key, Value types.Type
 }
 
 // Program is the BTF information for a stream of instructions.
@@ -927,20 +928,20 @@ var haveFuncLinkage = internal.FeatureTest("BTF func linkage", "5.6", func() err
 	}
 
 	var (
-		types struct {
+		btfTypes struct {
 			FuncProto btfType
 			Func      btfType
 		}
 		strings = []byte{0, 'a', 0}
 	)
 
-	types.FuncProto.SetKind(kindFuncProto)
-	types.Func.SetKind(kindFunc)
-	types.Func.SizeType = 1 // aka FuncProto
-	types.Func.NameOff = 1
-	types.Func.SetLinkage(GlobalFunc)
+	btfTypes.FuncProto.SetKind(kindFuncProto)
+	btfTypes.Func.SetKind(kindFunc)
+	btfTypes.Func.SizeType = 1 // aka FuncProto
+	btfTypes.Func.NameOff = 1
+	btfTypes.Func.SetLinkage(types.GlobalFunc)
 
-	btf := marshalBTF(&types, strings, internal.NativeEndian)
+	btf := marshalBTF(&btfTypes, strings, internal.NativeEndian)
 
 	fd, err := sys.BtfLoad(&sys.BtfLoadAttr{
 		Btf:     sys.NewSlicePointer(btf),
