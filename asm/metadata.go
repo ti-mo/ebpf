@@ -2,21 +2,43 @@ package asm
 
 // Metadata contains metadata about an instruction.
 type Metadata struct {
-	head *metaElement
+	elems []metaElement
 }
 
 type metaElement struct {
-	next       *metaElement
 	key, value interface{}
 }
 
-func (me *metaElement) find(key interface{}) *metaElement {
-	for e := me; e != nil; e = e.next {
+// find returns the metaElement with the given key along with
+// its position in the Metadata slice.
+func (m *Metadata) find(key interface{}) (int, *metaElement) {
+	for i, e := range m.elems {
 		if e.key == key {
-			return e
+			return i, &e
 		}
 	}
-	return nil
+	return 0, nil
+}
+
+// delete deletes the metadata element with the given key, if present.
+// The operation moves the last element of the slice into the slot that is
+// to be deleted to avoid an additional slice reallocation.
+func (m *Metadata) delete(key interface{}) {
+	for i, e := range m.elems {
+		if e.key == key {
+			m.copy()
+			m.elems[i] = m.elems[len(m.elems)-1]
+			m.elems = m.elems[:len(m.elems)-1]
+			return
+		}
+	}
+}
+
+// copy makes a copy of the elements contained in Metadata.
+func (m *Metadata) copy() {
+	ne := make([]metaElement, len(m.elems))
+	copy(ne, m.elems)
+	m.elems = ne
 }
 
 // Set a value to the metadata set.
@@ -24,58 +46,34 @@ func (me *metaElement) find(key interface{}) *metaElement {
 // If value is nil, the key is removed. Avoids modifying old metadata by
 // copying if necessary.
 func (m *Metadata) Set(key, value interface{}) {
-	switch e := m.head.find(key); {
-	case e == nil:
-		// Key is not present, simply prepend it to the list.
-		if value != nil {
-			m.head = &metaElement{key: key, value: value, next: m.head}
-		}
-		return
-
-	case e.value == value:
-		// Key is present and the value is the same. Nothing to do.
-		return
-
-	case e == m.head:
-		// Key is present with a different value, at the head position.
-		// Use the tail without copying.
-		if value != nil {
-			m.head = &metaElement{key: key, value: value, next: m.head.next}
-		} else {
-			m.head = m.head.next
-		}
+	if value == nil {
+		// Caller wants to remove the metadata.
+		m.delete(key)
 		return
 	}
 
-	// There is no such key, or the value is different.
-	// Create a copy and overwrite the entry for key.
-	var (
-		head *metaElement
-		prev = &head
-	)
-	for e := m.head; e != nil; e = e.next {
-		if e.key == key {
-			// Don't copy an element we'll replace.
-			continue
-		}
-
-		cpy := &metaElement{key: e.key, value: e.value}
-		*prev = cpy
-		prev = &cpy.next
+	i, e := m.find(key)
+	if e == nil {
+		// No existing element, append it to the slice.
+		m.copy()
+		m.elems = append(m.elems, metaElement{key: key, value: value})
+		return
+	}
+	if e.value == value {
+		// Same value, nothing to do.
+		return
 	}
 
-	if value != nil {
-		m.head = &metaElement{key: key, value: value, next: head}
-	} else {
-		m.head = head
-	}
+	// Different value, copy the metadata and update the element.
+	m.copy()
+	m.elems[i] = metaElement{key: key, value: value}
 }
 
 // Get a value from the metadata set.
 //
 // Returns nil if no value with the given key is present.
 func (m *Metadata) Get(key interface{}) interface{} {
-	if e := m.head.find(key); e != nil {
+	if _, e := m.find(key); e != nil {
 		return e.value
 	}
 	return nil

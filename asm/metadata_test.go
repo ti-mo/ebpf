@@ -2,15 +2,12 @@ package asm
 
 import (
 	"testing"
-	"unsafe"
 
 	qt "github.com/frankban/quicktest"
 )
 
 func TestMetadata(t *testing.T) {
 	var m Metadata
-
-	t.Log("size:", unsafe.Sizeof(m))
 
 	// A lookup in a nil meta should return nil.
 	qt.Assert(t, m.Get(bool(false)), qt.IsNil)
@@ -19,16 +16,20 @@ func TestMetadata(t *testing.T) {
 	m.Set(bool(false), int(0))
 	qt.Assert(t, m.Get(bool(false)), qt.Equals, int(0))
 
-	// We have copy on write semantics
-	old := m
+	// Update an existing key.
 	m.Set(bool(false), int(1))
 	qt.Assert(t, m.Get(bool(false)), qt.Equals, int(1))
-	qt.Assert(t, old.Get(bool(false)), qt.Equals, int(0))
 
-	// Newtypes are handled distinctly.
+	// We have copy on write semantics
+	old := m
+	m.Set(bool(false), int(2))
+	qt.Assert(t, m.Get(bool(false)), qt.Equals, int(2))
+	qt.Assert(t, old.Get(bool(false)), qt.Equals, int(1))
+
+	// Equal values of different types represent different keys.
 	type b bool
 	m.Set(b(false), int(42))
-	qt.Assert(t, m.Get(bool(false)), qt.Equals, int(1))
+	qt.Assert(t, m.Get(bool(false)), qt.Equals, int(2))
 	qt.Assert(t, m.Get(b(false)), qt.Equals, int(42))
 
 	// Setting nil removes a key.
