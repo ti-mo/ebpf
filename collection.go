@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/cilium/ebpf/asm"
 	"github.com/cilium/ebpf/btf"
 	"github.com/cilium/ebpf/internal"
+	"golang.org/x/sync/errgroup"
 )
 
 // CollectionOptions control loading a collection into the kernel.
@@ -369,20 +371,36 @@ func NewCollectionWithOptions(spec *CollectionSpec, opts CollectionOptions) (*Co
 	defer loader.close()
 
 	// Create maps first, as their fds need to be linked into programs.
+	var mg errgroup.Group
 	for mapName := range spec.Maps {
-		if _, err := loader.loadMap(mapName); err != nil {
-			return nil, err
-		}
+		mapName := mapName
+		mg.Go(func() error {
+			if _, err := loader.loadMap(mapName); err != nil {
+				return err
+			}
+			return nil
+		})
+	}
+	if err := mg.Wait(); err != nil {
+		return nil, err
 	}
 
+	var pg errgroup.Group
 	for progName, prog := range spec.Programs {
 		if prog.Type == UnspecifiedProgram {
 			continue
 		}
 
-		if _, err := loader.loadProgram(progName); err != nil {
-			return nil, err
-		}
+		progName := progName
+		pg.Go(func() error {
+			if _, err := loader.loadProgram(progName); err != nil {
+				return err
+			}
+			return nil
+		})
+	}
+	if err := pg.Wait(); err != nil {
+		return nil, err
 	}
 
 	// Maps can contain Program and Map stubs, so populate them after
@@ -402,10 +420,37 @@ func NewCollectionWithOptions(spec *CollectionSpec, opts CollectionOptions) (*Co
 }
 
 type collectionLoader struct {
-	coll     *CollectionSpec
-	opts     *CollectionOptions
-	maps     map[string]*Map
-	programs map[string]*Program
+	coll *CollectionSpec
+	opts *CollectionOptions
+
+	mapsMu      *sync.Mutex
+	mapsMutexes map[string]*sync.Mutex
+	maps        map[string]*Map
+
+	programsMu      *sync.Mutex
+	programsMutexes map[string]*sync.Mutex
+	programs        map[string]*Program
+}
+
+func (cl *collectionLoader) mapMu(name string) *sync.Mutex {
+	cl.mapsMu.Lock()
+	defer cl.mapsMu.Unlock()
+
+	if cl.mapsMutexes[name] == nil {
+		cl.mapsMutexes[name] = &sync.Mutex{}
+	}
+
+	return cl.mapsMutexes[name]
+}
+func (cl *collectionLoader) progMu(name string) *sync.Mutex {
+	cl.programsMu.Lock()
+	defer cl.programsMu.Unlock()
+
+	if cl.programsMutexes[name] == nil {
+		cl.programsMutexes[name] = &sync.Mutex{}
+	}
+
+	return cl.programsMutexes[name]
 }
 
 func newCollectionLoader(coll *CollectionSpec, opts *CollectionOptions) (*collectionLoader, error) {
@@ -428,7 +473,11 @@ func newCollectionLoader(coll *CollectionSpec, opts *CollectionOptions) (*collec
 	return &collectionLoader{
 		coll,
 		opts,
+		&sync.Mutex{},
+		make(map[string]*sync.Mutex),
 		make(map[string]*Map),
+		&sync.Mutex{},
+		make(map[string]*sync.Mutex),
 		make(map[string]*Program),
 	}, nil
 }
@@ -444,6 +493,10 @@ func (cl *collectionLoader) close() {
 }
 
 func (cl *collectionLoader) loadMap(mapName string) (*Map, error) {
+	mu := cl.mapMu(mapName)
+	mu.Lock()
+	defer mu.Unlock()
+
 	if m := cl.maps[mapName]; m != nil {
 		return m, nil
 	}
@@ -469,11 +522,18 @@ func (cl *collectionLoader) loadMap(mapName string) (*Map, error) {
 		return nil, fmt.Errorf("map %s: %w", mapName, err)
 	}
 
+	cl.mapsMu.Lock()
 	cl.maps[mapName] = m
+	cl.mapsMu.Unlock()
+
 	return m, nil
 }
 
 func (cl *collectionLoader) loadProgram(progName string) (*Program, error) {
+	mu := cl.progMu(progName)
+	mu.Lock()
+	defer mu.Unlock()
+
 	if prog := cl.programs[progName]; prog != nil {
 		return prog, nil
 	}
@@ -522,7 +582,10 @@ func (cl *collectionLoader) loadProgram(progName string) (*Program, error) {
 		return nil, fmt.Errorf("program %s: %w", progName, err)
 	}
 
+	cl.programsMu.Lock()
 	cl.programs[progName] = prog
+	cl.programsMu.Unlock()
+
 	return prog, nil
 }
 
