@@ -181,10 +181,28 @@ type MapKV struct {
 	Value interface{}
 }
 
-// Compatible returns nil if an existing map may be used instead of creating
-// one from the spec.
+// IncompatibleMapError is returned when an incoming MapSpec is incompatible
+// with its existing pinned Map.
+type IncompatibleMapError struct {
+	Existing *Map
+	Incoming *MapSpec
+	diff     string
+}
+
+func (err *IncompatibleMapError) Error() string {
+	return fmt.Sprintf("%s: %s", err.diff, ErrMapIncompatible)
+}
+
+func (*IncompatibleMapError) Is(target error) bool {
+	return target == ErrMapIncompatible
+}
+
+// Compatible returns nil if an existing map may be used instead of creating one
+// from the spec.
 //
-// Returns an error wrapping [ErrMapIncompatible] otherwise.
+// If the Map is not compatible, returns an [IncompatibleMapError] wrapping
+// [ErrMapIncompatible]. The [IncompatibleMapError] contains the incoming
+// MapSpec and the existing Map for inspection using errors.As.
 func (ms *MapSpec) Compatible(m *Map) error {
 	ms, err := ms.fixupMagicFields()
 	if err != nil {
@@ -205,8 +223,8 @@ func (ms *MapSpec) Compatible(m *Map) error {
 		diffs = append(diffs, fmt.Sprintf("MaxEntries: %d changed to %d", m.maxEntries, ms.MaxEntries))
 	}
 
-	// BPF_F_RDONLY_PROG is set unconditionally for devmaps. Explicitly allow this
-	// mismatch.
+	// BPF_F_RDONLY_PROG is set unconditionally for devmaps. Explicitly allow
+	// this mismatch.
 	if !((ms.Type == DevMap || ms.Type == DevMapHash) && m.flags^ms.Flags == unix.BPF_F_RDONLY_PROG) &&
 		m.flags != ms.Flags {
 		diffs = append(diffs, fmt.Sprintf("Flags: %d changed to %d", m.flags, ms.Flags))
@@ -216,7 +234,11 @@ func (ms *MapSpec) Compatible(m *Map) error {
 		return nil
 	}
 
-	return fmt.Errorf("%s: %w", strings.Join(diffs, ", "), ErrMapIncompatible)
+	return &IncompatibleMapError{
+		Existing: m,
+		Incoming: ms,
+		diff:     strings.Join(diffs, ", "),
+	}
 }
 
 // Map represents a Map file descriptor.
