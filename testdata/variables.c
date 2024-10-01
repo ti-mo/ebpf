@@ -40,3 +40,9 @@ volatile struct var_struct_t var_struct __section(".data.struct");
 __section("socket") int check_struct() {
 	return var_struct.a == 0xa && var_struct.b == 0xb;
 }
+
+volatile uint32_t var_atomic __section(".data.atomic");
+__section("socket") int add_atomic() {
+	__sync_fetch_and_add(&var_atomic, 1);
+	return 0;
+}

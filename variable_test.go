@@ -1,6 +1,7 @@
 package ebpf
 
 import (
+	"sync/atomic"
 	"testing"
 
 	"github.com/go-quicktest/qt"
@@ -135,4 +136,51 @@ func TestVariableConst(t *testing.T) {
 	mustReturn(t, obj.GetRodata, want)
 
 	qt.Assert(t, qt.ErrorIs(obj.Rodata.Set(want), ErrReadOnly))
+}
+
+func TestVariablePointer(t *testing.T) {
+	testutils.SkipOnOldKernel(t, "5.5", "mmapable maps")
+
+	file := testutils.NativeFile(t, "testdata/variables-%s.elf")
+	spec, err := LoadCollectionSpec(file)
+	qt.Assert(t, qt.IsNil(err))
+
+	obj := struct {
+		AddAtomic   *Program `ebpf:"add_atomic"`
+		CheckStruct *Program `ebpf:"check_struct"`
+
+		Atomic *Variable `ebpf:"var_atomic"`
+		Struct *Variable `ebpf:"var_struct"`
+	}{}
+
+	qt.Assert(t, qt.IsNil(spec.LoadAndAssign(&obj, nil)))
+	t.Cleanup(func() {
+		obj.AddAtomic.Close()
+		obj.CheckStruct.Close()
+	})
+
+	a32, err := VariablePointer[atomic.Uint32](obj.Atomic)
+	qt.Assert(t, qt.IsNil(err))
+
+	// Bump the value by 1 using a bpf program.
+	want := uint32(1338)
+	a32.Store(want - 1)
+	mustReturn(t, obj.AddAtomic, 0)
+	qt.Assert(t, qt.Equals(a32.Load(), want))
+
+	_, err = VariablePointer[*uint32](obj.Atomic)
+	qt.Assert(t, qt.ErrorIs(err, ErrInvalidType))
+
+	// TODO: When moving to Go 1.23, embed structs.HostLayout here.
+	type S struct {
+		A, B uint64
+	}
+
+	s, err := VariablePointer[S](obj.Struct)
+	qt.Assert(t, qt.IsNil(err))
+	*s = S{0xa, 0xb}
+	mustReturn(t, obj.CheckStruct, 1)
+
+	_, err = VariablePointer[struct{ A, B *uint64 }](obj.Struct)
+	qt.Assert(t, qt.ErrorIs(err, ErrInvalidType))
 }
