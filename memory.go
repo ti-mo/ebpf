@@ -1,6 +1,7 @@
 package ebpf
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -48,6 +49,7 @@ import (
 func heapObjectsCanMove() bool
 
 var ErrReadOnly = errors.New("resource is read-only")
+var ErrInvalidType = errors.New("invalid type")
 
 // Memory implements accessing a Map's memory without making any syscalls.
 type Memory struct {
@@ -224,4 +226,51 @@ func (mm *Memory) WriteAt(p []byte, off int64) (int, error) {
 	}
 
 	return n, nil
+}
+
+// checkMemory ensures value T can be accessed in mm at offset off.
+func checkMemory[T any](mm *Memory, off uint64) error {
+	if mm.b == nil {
+		return fmt.Errorf("memory-mapped region closed")
+	}
+	if mm.ro {
+		return ErrReadOnly
+	}
+
+	var t T
+	size := binary.Size(t)
+	if size < 0 {
+		return fmt.Errorf("can't determine size of type %T: %w", t, ErrInvalidType)
+	}
+
+	align := internal.Align(off, uint64(size))
+	if off != align {
+		return fmt.Errorf("unaligned access of memory-mapped region: size %d at offset %d aligns to %d", size, off, align)
+	}
+
+	vs, bs := uint64(size), uint64(len(mm.b))
+	if off+vs > bs {
+		return fmt.Errorf("%d-byte value at offset %d exceeds mmap size of %d bytes", vs, off, bs)
+	}
+
+	return nil
+}
+
+// reinterp reinterprets a pointer of type In to a pointer of type Out.
+func reinterp[Out any, In any](in *In) *Out {
+	return (*Out)(unsafe.Pointer(in))
+}
+
+// MemoryPointer returns a pointer to a value of type T at offset off in mm.
+//
+// T must be a fixed-size type according to [binary.Size]. Types containing Go
+// pointers are not valid. Memory must be writable, off must be aligned to
+// the size of T, and the value must be in bounds of the Memory.
+//
+// To access read-only memory, use [Memory.ReadAt].
+func MemoryPointer[T any](mm *Memory, off uint64) (*T, error) {
+	if err := checkMemory[T](mm, off); err != nil {
+		return nil, fmt.Errorf("memory pointer: %w", err)
+	}
+	return reinterp[T](&mm.b[off]), nil
 }

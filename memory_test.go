@@ -66,3 +66,50 @@ func TestMemoryUnmap(t *testing.T) {
 	// unmap panics if the operation fails.
 	unmap(mm.Size())(ptr)
 }
+
+func TestMemoryPointer(t *testing.T) {
+	mm, err := mustMmapableArray(t, 0).Memory()
+	qt.Assert(t, qt.IsNil(err))
+
+	// Requesting an unaligned value should fail.
+	_, err = MemoryPointer[uint32](mm, 7)
+	qt.Assert(t, qt.IsNotNil(err))
+
+	u32, err := MemoryPointer[uint32](mm, 12)
+	qt.Assert(t, qt.IsNil(err))
+
+	*u32 = 0xf00d
+	qt.Assert(t, qt.Equals(*u32, 0xf00d))
+
+	_, err = MemoryPointer[*uint32](mm, 0)
+	qt.Assert(t, qt.ErrorIs(err, ErrInvalidType))
+}
+
+func testReadOnly(tb testing.TB, mm *Memory) {
+	tb.Helper()
+
+	_, err := mm.WriteAt([]byte{1}, 0)
+	qt.Assert(tb, qt.ErrorIs(err, ErrReadOnly))
+
+	_, err = MemoryPointer[uint32](mm, 0)
+	qt.Assert(tb, qt.ErrorIs(err, ErrReadOnly))
+}
+
+func TestMemoryReadonly(t *testing.T) {
+	m := mustMmapableArray(t, sys.BPF_F_RDONLY_PROG)
+
+	mm, err := m.Memory()
+	qt.Assert(t, qt.IsNil(err))
+
+	testReadOnly(t, mm)
+}
+
+func TestMemoryFrozen(t *testing.T) {
+	m := mustMmapableArray(t, 0)
+	qt.Assert(t, qt.IsNil(m.Freeze()))
+
+	mm, err := m.Memory()
+	qt.Assert(t, qt.IsNil(err))
+
+	testReadOnly(t, mm)
+}
