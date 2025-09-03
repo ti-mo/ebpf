@@ -293,9 +293,9 @@ func TestVariablePointerGC(t *testing.T) {
 
 	// Set finalizer on obj to get notified when it is collected.
 	ogc := make(chan struct{})
-	runtime.SetFinalizer(&obj, func(*obj_s) {
+	runtime.AddCleanup(&obj, func(*byte) {
 		close(ogc)
-	})
+	}, nil)
 
 	// Set finalizer on the last byte of the Memory to get notified when it is
 	// collected.
@@ -313,9 +313,9 @@ func TestVariablePointerGC(t *testing.T) {
 			return
 		}
 	}()
-	runtime.SetFinalizer(&mem.b[len(mem.b)-1], func(p *byte) {
+	runtime.AddCleanup(&mem.b[len(mem.b)-1], func(*byte) {
 		close(mgc)
-	})
+	}, nil)
 
 	// Pull out Program handle and Variable pointer so reference to obj is
 	// dropped.

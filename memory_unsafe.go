@@ -27,7 +27,7 @@ import (
 // This led to a solution that requests regular Go heap memory by allocating a
 // slice (making the runtime track pointers into the slice's backing array) and
 // memory-mapping the bpf map's memory over it. Then, before returning the
-// Memory to the caller, a finalizer is set on the backing array, making sure
+// Memory to the caller, a cleanup is set on the backing array, making sure
 // the bpf map's memory is unmapped from the heap before releasing the backing
 // array to the runtime for reallocation.
 //
@@ -70,14 +70,14 @@ func newUnsafeMemory(fd, size int) (*Memory, error) {
 	// verifier assumes the contents to be immutable.
 	//
 	// Map the bpf map memory over a page-aligned allocation on the Go heap.
-	err = mapmap(fd, alloc, size, unix.PROT_READ|unix.PROT_WRITE)
+	cleanup, err := mapmap(fd, alloc, size, unix.PROT_READ|unix.PROT_WRITE)
 
 	// If the map is frozen when an rw mapping is requested, expect EPERM. If the
 	// map was created with BPF_F_RDONLY_PROG, expect EACCES.
 	var ro bool
 	if errors.Is(err, unix.EPERM) || errors.Is(err, unix.EACCES) {
 		ro = true
-		err = mapmap(fd, alloc, size, unix.PROT_READ)
+		cleanup, err = mapmap(fd, alloc, size, unix.PROT_READ)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("setting up memory-mapped region: %w", err)
@@ -87,6 +87,7 @@ func newUnsafeMemory(fd, size int) (*Memory, error) {
 		unsafe.Slice((*byte)(alloc), size),
 		ro,
 		true,
+		cleanup,
 	}
 
 	return mm, nil
@@ -126,27 +127,19 @@ func allocate(size int) (unsafe.Pointer, error) {
 	runtime.KeepAlive(alloc)
 
 	// Return an aligned pointer into the backing array, losing the original
-	// reference. The runtime.SetFinalizer docs specify that its argument 'must be
-	// a pointer to an object, complit or local var', but this is still somewhat
-	// vague and not enforced by the current implementation.
+	// reference. Potentially bump the pointer and treat it as the new and only
+	// reference to the backing array.
 	//
-	// Currently, finalizers can be set and triggered from any address within a
-	// heap allocation, even individual struct fields or arbitrary offsets within
-	// a slice. In this case, finalizers set on struct fields or slice offsets
-	// will only run when the whole struct or backing array are collected. The
-	// accepted runtime.AddCleanup proposal makes this behaviour more explicit and
-	// is set to deprecate runtime.SetFinalizer.
-	//
-	// Alternatively, we'd have to track the original allocation and the aligned
-	// pointer separately, which severely complicates finalizer setup and makes it
-	// prone to human error. For now, just bump the pointer and treat it as the
-	// new and only reference to the backing array.
+	// One or more cleanups can be set on any address within a heap allocation,
+	// even on individual struct fields or arbitrary offsets within a slice.
+	// Cleanups only run when the whole allocation (struct or backing array) is
+	// collected, and no ordering is guaranteed between cleanups.
 	return aligned, nil
 }
 
-// mapmap memory-maps the given file descriptor at the given address and sets a
-// finalizer on addr to unmap it when it's no longer reachable.
-func mapmap(fd int, addr unsafe.Pointer, size, flags int) error {
+// mapmap memory-maps the given file descriptor at the given address and adds a
+// cleanup to addr's allocation to unmap it when it's no longer reachable.
+func mapmap(fd int, addr unsafe.Pointer, size, flags int) (runtime.Cleanup, error) {
 	// Map the bpf map memory over the Go heap. This will result in the following
 	// mmap layout in the process' address space (0xc000000000 is a span of Go
 	// heap), visualized using pmap:
@@ -165,52 +158,57 @@ func mapmap(fd int, addr unsafe.Pointer, size, flags int) error {
 	// isn't page-aligned, the mapping operation will fail.
 	if _, err := unix.MmapPtr(fd, 0, addr, uintptr(size),
 		flags, unix.MAP_SHARED|unix.MAP_FIXED); err != nil {
-		return fmt.Errorf("setting up memory-mapped region: %w", err)
+		return runtime.Cleanup{}, fmt.Errorf("setting up memory-mapped region: %w", err)
 	}
 
-	// Set a finalizer on the heap allocation to undo the mapping before the span
+	// Set a cleanup on the heap allocation to undo the mapping before the span
 	// is collected and reused by the runtime. This has a few reasons:
 	//
 	//  - Avoid leaking memory/mappings.
 	//  - Future writes to this memory should never clobber a bpf map's contents.
 	//  - Some bpf maps are mapped read-only, causing a segfault if the runtime
 	//    reallocates and zeroes the span later.
-	runtime.SetFinalizer((*byte)(addr), unmap(size))
-
-	return nil
+	//
+	// The cleanup is given a uintptr since AddCleanup panics if ptr and arg point
+	// to the same object, as it would mean a cyclical reference. Passing a
+	// [weak.Pointer] instead of a uintptr to the cleanup not an option, since
+	// [weak.Pointer.Value] returns nil for allocs queued for cleanup.
+	ptr := (*byte)(addr)
+	return runtime.AddCleanup(ptr, unsafeMemoryCleanupFunc(size), uintptr(unsafe.Pointer(ptr))), nil
 }
 
-// unmap returns a function that takes a pointer to a memory-mapped region on
-// the Go heap. The function undoes any mappings and discards the span's
-// contents.
+// unsafeMemoryCleanupFunc returns a function that takes a pointer to a
+// memory-mapped region on the Go heap. The function undoes any mappings and
+// discards the span's contents.
 //
-// Used as a finalizer in [newMemory], split off into a separate function for
-// testing and to avoid accidentally closing over the unsafe.Pointer to the
-// memory region, which would cause a cyclical reference.
+// Used as a cleanup in [newMemory], split off into a separate function for
+// testing and to avoid accidentally closing over the pointer to the memory
+// region, which would cause a cyclical reference.
 //
 // The resulting function panics if the mmap operation returns an error, since
 // it would mean the integrity of the Go heap is compromised.
-func unmap(size int) func(*byte) {
-	return func(a *byte) {
-		// Create another mapping at the same address to undo the original mapping.
-		// This will cause the kernel to repair the slab since we're using the same
-		// protection mode and flags as the original mapping for the Go heap.
-		//
-		// Address           Kbytes     RSS   Dirty Mode  Mapping
-		// 000000c000000000    4096     884     884 rw--- [ anon ]
-		//
-		// Using munmap here would leave an unmapped hole in the heap, compromising
-		// its integrity.
-		//
-		// MmapPtr allocates another unsafe.Pointer at the same address. Even though
-		// we discard it here, it may temporarily resurrect the backing array and
-		// delay its collection to the next GC cycle.
-		_, err := unix.MmapPtr(-1, 0, unsafe.Pointer(a), uintptr(size),
-			unix.PROT_READ|unix.PROT_WRITE,
-			unix.MAP_PRIVATE|unix.MAP_FIXED|unix.MAP_ANON)
-		if err != nil {
-			panic(fmt.Errorf("undoing bpf map memory mapping: %w", err))
-		}
+func unsafeMemoryCleanupFunc(size int) func(uintptr) {
+	return func(ptr uintptr) { unmapeUnsafeMemory(ptr, size) }
+}
+
+//go:nocheckptr
+func unmapeUnsafeMemory(ptr uintptr, size int) {
+	// Create another mapping at the same address to undo the original mapping.
+	// This will cause the kernel to repair the slab since we're using the same
+	// protection mode and flags as the original mapping for the Go heap.
+	//
+	// Address           Kbytes     RSS   Dirty Mode  Mapping
+	// 000000c000000000    4096     884     884 rw--- [ anon ]
+	//
+	// Using munmap here would leave an unmapped hole in the heap, compromising
+	// its integrity.
+	//
+	//nolint:govet
+	_, err := unix.MmapPtr(-1, 0, unsafe.Pointer(ptr), uintptr(size),
+		unix.PROT_READ|unix.PROT_WRITE,
+		unix.MAP_PRIVATE|unix.MAP_FIXED|unix.MAP_ANON)
+	if err != nil {
+		panic(fmt.Errorf("undoing bpf map memory mapping: %w", err))
 	}
 }
 

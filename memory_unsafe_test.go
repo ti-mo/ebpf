@@ -1,7 +1,6 @@
 package ebpf
 
 import (
-	"runtime"
 	"structs"
 	"sync/atomic"
 	"testing"
@@ -25,10 +24,10 @@ func TestUnsafeMemoryUnmap(t *testing.T) {
 	qt.Assert(t, qt.IsNil(err))
 
 	// Avoid unmap running twice.
-	runtime.SetFinalizer(unsafe.SliceData(mm.b), nil)
+	mm.cleanup.Stop()
 
 	// unmap panics if the operation fails.
-	unmap(mm.Size())(unsafe.SliceData(mm.b))
+	unsafeMemoryCleanupFunc(mm.Size())(uintptr(unsafe.Pointer(unsafe.SliceData(mm.b))))
 }
 
 func TestUnsafeMemoryPointer(t *testing.T) {
