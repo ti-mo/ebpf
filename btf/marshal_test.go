@@ -123,7 +123,7 @@ limitTypes:
 	rebuilt, err := loadRawSpec(buf, nil)
 	qt.Assert(t, qt.IsNil(err), qt.Commentf("round tripping BTF failed"))
 
-	if n := len(rebuilt.offsets); n > math.MaxUint16 {
+	if n := rebuilt.d.len(); n > math.MaxUint16 {
 		t.Logf("Rebuilt BTF contains %d types which exceeds uint16, test may fail on older kernels", n)
 	}
 
@@ -281,7 +281,7 @@ func specFromTypes(tb testing.TB, types []Type) *Spec {
 func typesFromSpec(tb testing.TB, spec *Spec) []Type {
 	tb.Helper()
 
-	types := make([]Type, 0, len(spec.offsets))
+	types := make([]Type, 0, spec.d.len())
 
 	for typ, err := range spec.All() {
 		qt.Assert(tb, qt.IsNil(err))

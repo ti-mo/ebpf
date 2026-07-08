@@ -99,7 +99,7 @@ func TestStringTableBuilder(t *testing.T) {
 }
 
 func BenchmarkStringTableZeroLookup(b *testing.B) {
-	strings := vmlinuxTestdataSpec(b).strings
+	strings := vmlinuxTestdataSpec(b).strings()
 
 	for b.Loop() {
 		s, err := strings.Lookup(0)

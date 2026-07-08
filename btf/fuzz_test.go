@@ -54,7 +54,7 @@ func FuzzExtInfo(f *testing.F) {
 		}
 
 		emptySpec := specFromTypes(t, nil)
-		emptySpec.strings = table
+		emptySpec.d.strings = table
 
 		info, err := loadExtInfos(bytes.NewReader(data), internal.NativeEndian, emptySpec)
 		if err != nil {
